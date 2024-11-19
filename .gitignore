@@ -1,0 +1,7 @@
+/.vscode/
+/.vs/
+*.4coder
+*.exe
+*.pdb
+*.sln
+*.suo
