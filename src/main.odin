@@ -14,6 +14,7 @@ CARD_TEXTURE_START_OFFSET :: rl.Vector2{9, 13}
 CARD_TEXTURE_X_GAP :: 13
 CARD_TEXTURE_Y_GAP :: 20
 CARD_TEXTURE_CARD_DIMS :: rl.Vector2{109, 149}
+CARD_TEXTURE_CARD_BACK_DIMS :: rl.Vector2{100, 144} //TODO: Edit card back to be same dims
 
 //TODO: Better name
 BANNER_HEIGHT :: 0.16 * SCREEN_HEIGHT
@@ -36,6 +37,7 @@ Card :: struct {
     num: uint,
 
     z_index: int,
+    face_down: bool,
     rect: rl.Rectangle //TODO: Just have pos?
 }
 
@@ -51,9 +53,14 @@ move_rect :: proc(rect: rl.Rectangle, delta: rl.Vector2) -> rl.Rectangle {
     return rl.Rectangle{rect.x + delta.x, rect.y + delta.y, rect.width, rect.height}
 }
 
-card_texture_rect :: proc(suit: Suit, number: uint) -> (tex_rect: rl.Rectangle) {
+card_texture_rect :: proc(suit: Suit, number: uint, face_down: bool) -> (tex_rect: rl.Rectangle) {
     assert(number <= KING)
     
+    if face_down {
+        tex_rect = rect_v(rl.Vector2{}, CARD_TEXTURE_CARD_BACK_DIMS)
+        return
+    }
+
     row : f32
     switch (suit) {
         case .DIAMOND: row = 0.0 
@@ -91,6 +98,7 @@ main :: proc() {
             cards[card_index].suit = suit
             cards[card_index].num = uint(num)
             cards[card_index].z_index = len(cards) - card_index
+            cards[card_index].face_down = card_index % 2 == 0
 
             corner_offset := rl.Vector2{20.0, 20.0 + BANNER_HEIGHT}
             card_pos := corner_offset + rl.Vector2{
@@ -102,6 +110,7 @@ main :: proc() {
     }
 
     all_cards_texture := rl.LoadTexture("assets/all_cards.png")
+    card_back_texture := rl.LoadTexture("assets/card_back.png")
 
     selected_card_index: Maybe(int)
     mouse_pos_on_click: rl.Vector2
@@ -162,8 +171,8 @@ main :: proc() {
 
             for card in cards_to_draw {
                 rl.DrawTextureRec(
-                    all_cards_texture, 
-                    card_texture_rect(card.suit, card.num), 
+                    all_cards_texture if !card.face_down else card_back_texture, 
+                    card_texture_rect(card.suit, card.num, card.face_down), 
                     rect_pos(card.rect), 
                     rl.WHITE
                 )
