@@ -10,7 +10,7 @@ SCREEN_WIDTH  :: 1600
 SCREEN_HEIGHT :: 900
 
 //NOTE: These include the shadow around the borders 
-CARD_TEXTURE_START_OFFSET :: rl.Vector2{9, 13}
+CARD_TEXTURE_START_OFFSET :: rl.Vector2{8, 13}
 CARD_TEXTURE_X_GAP :: 13
 CARD_TEXTURE_Y_GAP :: 20
 CARD_TEXTURE_CARD_DIMS :: rl.Vector2{109, 149}
@@ -18,6 +18,8 @@ CARD_TEXTURE_CARD_BACK_DIMS :: rl.Vector2{100, 144} //TODO: Edit card back to be
 
 //TODO: Better name
 BANNER_HEIGHT :: 0.16 * SCREEN_HEIGHT
+//The offset from the top of the card required in order to not hide the suit and number
+CARD_STACKED_Y_OFFSET :: 45.0 
 
 //TODO: Convert into enum?
 ACE :: 1
@@ -97,15 +99,26 @@ main :: proc() {
             
             cards[card_index].suit = suit
             cards[card_index].num = uint(num)
-            cards[card_index].z_index = len(cards) - card_index
-            cards[card_index].face_down = card_index % 2 == 0
+            cards[card_index].z_index = card_index
+            cards[card_index].face_down = false
+        }
+    }
 
+    board_card_piles : [7]sa.Small_Array(20, int)
+    card_counter := 0
+    for pile_max in 1..=7 {
+        pile := pile_max - 1
+        for y in 0..<pile_max {
+            sa.append(&board_card_piles[pile], card_counter)
+            
             corner_offset := rl.Vector2{20.0, 20.0 + BANNER_HEIGHT}
-            card_pos := corner_offset + rl.Vector2{
-                (CARD_TEXTURE_CARD_DIMS.x + 10.0) * f32(x), 
-                (CARD_TEXTURE_CARD_DIMS.y + 10.0) * f32(y)
-            }
-            cards[card_index].rect = rect_v(card_pos, CARD_TEXTURE_CARD_DIMS)
+            pile_x_offset := (SCREEN_WIDTH - 2 * corner_offset.x) / len(board_card_piles)
+            card_offset := rl.Vector2{pile_x_offset * f32(pile), CARD_STACKED_Y_OFFSET * f32(y)}
+            card_pos := corner_offset + card_offset
+            cards[card_counter].rect = rect_v(card_pos, CARD_TEXTURE_CARD_DIMS)
+            cards[card_counter].face_down = y < pile_max - 1
+
+            card_counter += 1
         }
     }
 
@@ -152,6 +165,12 @@ main :: proc() {
         if rl.IsMouseButtonUp(.LEFT) {
             selected_card_index = nil
         }
+
+        //for _, pile_index in board_card_piles {
+        //    for card_index, z_index in sa.slice(&board_card_piles[pile_index]) {
+        //        cards[card_index].z_index = z_index
+        //    }
+        //}
         
         {
             rl.BeginDrawing()
