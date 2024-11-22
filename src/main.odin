@@ -14,10 +14,12 @@ CARD_TEXTURE_START_OFFSET :: rl.Vector2{8, 13}
 CARD_TEXTURE_X_GAP :: 13
 CARD_TEXTURE_Y_GAP :: 20
 CARD_TEXTURE_CARD_DIMS :: rl.Vector2{109, 149}
-CARD_TEXTURE_CARD_BACK_DIMS :: rl.Vector2{100, 144} //TODO: Edit card back to be same dims
+//CARD_TEXTURE_CARD_BACK_DIMS :: rl.Vector2{100, 144} //TODO: Edit card back to be same dims
 
 //TODO: Better name
-BANNER_HEIGHT :: 0.16 * SCREEN_HEIGHT
+BANNER_PAD :: 5
+BANNER_HEIGHT :: CARD_TEXTURE_CARD_DIMS.y + 2 * BANNER_PAD
+DECK_OFFSET :: rl.Vector2{BANNER_PAD, BANNER_PAD}
 //The offset from the top of the card required in order to not hide the suit and number
 CARD_STACKED_Y_OFFSET :: 45.0 
 
@@ -59,7 +61,7 @@ card_texture_rect :: proc(suit: Suit, number: uint, face_down: bool) -> (tex_rec
     assert(number <= KING)
     
     if face_down {
-        tex_rect = rect_v(rl.Vector2{}, CARD_TEXTURE_CARD_BACK_DIMS)
+        tex_rect = rect_v(rl.Vector2{}, CARD_TEXTURE_CARD_DIMS)
         return
     }
 
@@ -99,11 +101,11 @@ main :: proc() {
             
             cards[card_index].suit = suit
             cards[card_index].num = uint(num)
-            cards[card_index].z_index = card_index
             cards[card_index].face_down = false
         }
     }
 
+    //Set up main seven piles on the board
     board_card_piles : [7]sa.Small_Array(20, int)
     card_counter := 0
     for pile_max in 1..=7 {
@@ -120,6 +122,13 @@ main :: proc() {
 
             card_counter += 1
         }
+    }
+
+    //Set up deck
+    for card_index in card_counter..<52 {
+        cards[card_index].rect = rect_v(DECK_OFFSET, CARD_TEXTURE_CARD_DIMS)
+        cards[card_index].face_down = true
+        cards[card_index].z_index = card_index
     }
 
     all_cards_texture := rl.LoadTexture("assets/all_cards.png")
@@ -166,11 +175,11 @@ main :: proc() {
             selected_card_index = nil
         }
 
-        //for _, pile_index in board_card_piles {
-        //    for card_index, z_index in sa.slice(&board_card_piles[pile_index]) {
-        //        cards[card_index].z_index = z_index
-        //    }
-        //}
+        for _, pile_index in board_card_piles {
+            for card_index, z_index in sa.slice(&board_card_piles[pile_index]) {
+                cards[card_index].z_index = z_index
+            }
+        }
         
         {
             rl.BeginDrawing()
@@ -180,7 +189,7 @@ main :: proc() {
 
             rl.DrawRectangleV(
                 rl.Vector2{},
-                rl.Vector2{SCREEN_WIDTH, 0.16 * SCREEN_HEIGHT}, rl.Color{12, 87, 0, 255}
+                rl.Vector2{SCREEN_WIDTH, BANNER_HEIGHT}, rl.Color{12, 87, 0, 255}
             )
 
             cards_to_draw := slice.clone(cards[:], context.temp_allocator)
@@ -196,6 +205,8 @@ main :: proc() {
                     rl.WHITE
                 )
             }
+
+            //rl.DrawFPS(10, 10)
         }
     }
 }
