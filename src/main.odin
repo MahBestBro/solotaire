@@ -244,7 +244,7 @@ main :: proc() {
     all_cards_texture := rl.LoadTexture("assets/all_cards.png")
     card_back_texture := rl.LoadTexture("assets/card_back.png")
 
-    selected_card_index: Maybe(int)
+    selected_card_indices: sa.Small_Array(13, int)
     mouse_pos_on_click: rl.Vector2
     card_pos_on_click: rl.Vector2
     //TODO: Make something more descriptive than Maybe type?
@@ -271,15 +271,27 @@ main :: proc() {
                     }
                 }
 
-                selected_card_index = selected_index
+                switch loc in card_index_location(&depots, &deck, selected_index) {
+                case DepotLocation:
+                    for card_index in sa.slice(&depots[loc.depot_index])[loc.index_in_depot:] {
+                        sa.append(&selected_card_indices, card_index) 
+                    }
+                
+                case DeckLocation: 
+                    sa.append(&selected_card_indices, loc)
+                }
+
+
                 mouse_pos_on_click = mouse_pos
                 card_pos_on_click = rect_pos(cards[selected_index].rect)
                 original_depot_index = depot_index_from_card_index(&depots, selected_index)
             }
         }
 
-        if card_index, ok := selected_card_index.?; ok && rl.IsMouseButtonReleased(.LEFT) {
+        if sa.len(selected_card_indices) > 0 && rl.IsMouseButtonReleased(.LEFT) {
                 
+            top_selected_card := cards[sa.get(selected_card_indices, 0)]
+
             //TODO: Consider just going to nearest depot instead of checking for intersection?
             original_depot_index_index, selected_card_not_from_deck := original_depot_index.?
             for depot_index in 0..<len(depots) {
@@ -287,8 +299,8 @@ main :: proc() {
                 
                 depot_min_x := DEPOTS_START.x + DEPOT_X_OFFSET * f32(depot_index)
                 depot_max_x := depot_min_x + CARD_TEXTURE_CARD_DIMS.x
-                selected_card_min_x := cards[card_index].rect.x
-                selected_card_max_x := cards[card_index].rect.x + cards[card_index].rect.width
+                selected_card_min_x := top_selected_card.rect.x
+                selected_card_max_x := top_selected_card.rect.x + top_selected_card.rect.width
                 
                 card_min_x_in_depot := selected_card_min_x >= depot_min_x && selected_card_min_x <= depot_max_x
                 card_max_x_in_depot := selected_card_max_x >= depot_min_x && selected_card_max_x <= depot_max_x
@@ -299,26 +311,29 @@ main :: proc() {
                     depot_len := sa.len(depots[depot_index])
                     if depot_len > 0 {
                         top_card_in_depot := cards[sa.get(depots[depot_index], depot_len - 1)]
-                        cards_differ_in_colour = !same_colour(top_card_in_depot.suit, cards[card_index].suit)
-                        top_is_one_more = top_card_in_depot.num - cards[card_index].num == 1
+                        cards_differ_in_colour = !same_colour(top_card_in_depot.suit, top_selected_card.suit)
+                        top_is_one_more = top_card_in_depot.num - top_selected_card.num == 1
                     }
                     
-                    moving_king_to_empty_depot := cards[card_index].num == KING && depot_len == 0
+                    moving_king_to_empty_depot := top_selected_card.num == KING && depot_len == 0
 
                     if (cards_differ_in_colour && top_is_one_more) || moving_king_to_empty_depot {
-                        sa.append(&depots[depot_index], card_index)
-                        sa.pop_back(&depots[original_depot_index_index])
+                        for card_index in sa.slice(&selected_card_indices) {
+                            sa.append(&depots[depot_index], card_index) 
+                        }
+                        sa.consume(&depots[original_depot_index_index], sa.len(selected_card_indices))
                     }
                     
                     break
                 }
             }
             
-            selected_card_index = nil
+            sa.clear(&selected_card_indices)
         }
 
         if rl.IsKeyDown(.LEFT_CONTROL) && rl.IsKeyPressed(.R) {
             depots, deck = initialise_game(&cards)
+            sa.clear(&selected_card_indices) //TODO: Move into initialise game? 
         }
 
         for &depot, depot_index in depots {
@@ -330,17 +345,20 @@ main :: proc() {
                 cards[card_index].z_index = y
             }
 
-            cards[sa.get(depot, sa.len(depot) - 1)].face_down = false
+            if sa.len(depot) > 0 do cards[sa.get(depot, sa.len(depot) - 1)].face_down = false
         }
 
         for card_index in sa.slice(&deck) {
             cards[card_index].rect = rect_v(DECK_OFFSET, CARD_TEXTURE_CARD_DIMS)
         }
 
-        if card_index, ok := selected_card_index.?; ok {
+        if sa.len(selected_card_indices) > 0 {
             held_card_pos := card_pos_on_click + (mouse_pos - mouse_pos_on_click)
-            cards[card_index].rect.x = held_card_pos.x 
-            cards[card_index].rect.y = held_card_pos.y 
+            for card_index, y in sa.slice(&selected_card_indices) {
+                cards[card_index].rect.x = held_card_pos.x 
+                cards[card_index].rect.y = held_card_pos.y + CARD_STACKED_Y_OFFSET * f32(y)
+                cards[card_index].z_index = 52 + y
+            }
         }
 
         
