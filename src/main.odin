@@ -20,11 +20,20 @@ CARD_TEXTURE_X_GAP :: 13
 CARD_TEXTURE_Y_GAP :: 20
 CARD_TEXTURE_CARD_DIMS :: rl.Vector2{109, 149}
 
+//TODO: Better name, this is convoluted
+RESET_DECK_MARKER_TEXTURE_RECT :: rl.Rectangle{
+    x = CARD_TEXTURE_START_OFFSET.x + 4.0 * (CARD_TEXTURE_CARD_DIMS.x + CARD_TEXTURE_X_GAP),
+    y = CARD_TEXTURE_START_OFFSET.y + 4.0 * (CARD_TEXTURE_CARD_DIMS.y + CARD_TEXTURE_Y_GAP),
+    width = CARD_TEXTURE_CARD_DIMS.x,
+    height = CARD_TEXTURE_CARD_DIMS.y
+}
+
 //TODO: Better name
 BANNER_PAD :: 5
 BANNER_HEIGHT :: CARD_TEXTURE_CARD_DIMS.y + 2 * BANNER_PAD
-DECK_OFFSET :: rl.Vector2{BANNER_PAD, BANNER_PAD}
-DRAW_PILE_OFFSET :: rl.Vector2{DECK_OFFSET.x + CARD_TEXTURE_CARD_DIMS.x + 20.0, DECK_OFFSET.y}
+DECK_POS :: rl.Vector2{BANNER_PAD, BANNER_PAD}
+DRAW_PILE_START :: rl.Vector2{DECK_POS.x + CARD_TEXTURE_CARD_DIMS.x + 20.0, DECK_POS.y}
+SUIT_PILE_START :: rl.Vector2{DRAW_PILE_START.x + (CARD_TEXTURE_CARD_DIMS.x + 20.0) * 2.0, DECK_POS.y}
 DEPOTS_START :: rl.Vector2{20.0, 20.0 + BANNER_HEIGHT}
 DEPOT_X_OFFSET := (SCREEN_WIDTH - 2 * DEPOTS_START.x) / NUM_DEPOTS
 //The offset from the top of the card required in order to not hide the suit and number
@@ -37,22 +46,10 @@ QUEEN :: 12
 KING :: 13
 
 Suit :: enum {
-    DIAMOND,
-    HEART,
-    CLUB,
-    SPADE
-}
-
-//NOTE: This is based off which row the suits are in the sprite sheet
-//TODO: Rename
-suit_to_int :: proc(suit: Suit) -> (result: int) {
-    switch (suit) {
-    case .DIAMOND: result = 0 
-    case .HEART:   result = 1 
-    case .CLUB:    result = 2 
-    case .SPADE:   result = 3 
-    }
-    return
+    DIAMOND = 0,
+    HEART = 1,
+    CLUB = 2,
+    SPADE = 3
 }
 
 same_colour :: proc(suit1: Suit, suit2: Suit) -> bool {
@@ -73,7 +70,15 @@ Card :: struct {
 suit_num_to_card_index :: proc(suit: Suit, num: int) -> int {
     assert(num >= ACE && num <= KING)
 
-    return suit_to_int(suit) * KING + (num - 1)
+    return int(suit) * KING + (num - 1)
+}
+
+card_index_to_suit_num :: proc(card_index: int) -> (suit: Suit, num: int) {
+    assert(card_index >= 0 && card_index < 52)
+
+    suit = Suit(card_index / KING)
+    num = card_index % KING + ACE
+    return 
 }
 
 Depot :: sa.Small_Array(20, int)
@@ -83,10 +88,10 @@ Deck :: sa.Small_Array(MAX_CARDS_IN_DECK, int)
 Board :: struct {
     depots: [NUM_DEPOTS]Depot,
     deck: Deck,
-    draw_pile: Deck
+    draw_pile: Deck,
+    //NOTE: Each pile just tracks what the top card is since it has to be ordered anyways
+    suit_piles: [4]int   
 }
-
-
 
 
 rect_v :: proc(pos: rl.Vector2, dims: rl.Vector2) -> rl.Rectangle {
@@ -109,7 +114,7 @@ card_texture_rect :: proc(suit: Suit, num: int, face_down: bool) -> (tex_rect: r
         return
     }
 
-    row := f32(suit_to_int(suit))
+    row := f32(suit)
     column := f32(num - 1)
 
     offset := rl.Vector2{
@@ -120,6 +125,18 @@ card_texture_rect :: proc(suit: Suit, num: int, face_down: bool) -> (tex_rect: r
     tex_rect = rect_v(CARD_TEXTURE_START_OFFSET, CARD_TEXTURE_CARD_DIMS)
     tex_rect = move_rect(tex_rect, rl.Vector2{column * offset.x, row * offset.y})
     return
+}
+
+suit_pile_texture_rect :: proc(suit: Suit) -> rl.Rectangle {
+    offset := rl.Vector2{
+        (CARD_TEXTURE_CARD_DIMS.x + CARD_TEXTURE_X_GAP) * f32(suit), 
+        (CARD_TEXTURE_CARD_DIMS.y + CARD_TEXTURE_Y_GAP) * 4.0
+    }
+    return rect_v(CARD_TEXTURE_START_OFFSET + offset, CARD_TEXTURE_CARD_DIMS)
+} 
+
+suit_pile_pos :: proc(suit: Suit) -> rl.Vector2 {
+    return SUIT_PILE_START + rl.Vector2{f32(suit) * (CARD_TEXTURE_CARD_DIMS.x + 20.0), 0.0}
 }
 
 //NOTE: We need not do anything for draw_pile since it should just be zero-initialised anyways, which is the 
@@ -164,11 +181,13 @@ DepotLocation :: struct {
 
 DeckLocation :: distinct int
 DrawPileLocation :: distinct int
+SuitPileLocation :: Suit
 
 CardLocation :: union {
     DepotLocation,
     DeckLocation,
-    DrawPileLocation
+    DrawPileLocation,
+    SuitPileLocation
 }
 
 card_index_location :: proc(board: ^Board, target_card_index: int) -> CardLocation {
@@ -187,6 +206,9 @@ card_index_location :: proc(board: ^Board, target_card_index: int) -> CardLocati
     for card_index, index_in_deck in sa.slice(&board.draw_pile) {
         if card_index == target_card_index do return DrawPileLocation(card_index)
     }
+
+    suit, num := card_index_to_suit_num(target_card_index)
+    if board.suit_piles[int(suit)] <= num do return suit
 
     assert(false) //NOTE: This should be unreachable, is reached likely means target_card_index is invalid
     return DeckLocation(-1)
@@ -214,14 +236,14 @@ main :: proc() {
 
     board := initialise_board(&cards)
 
-    all_cards_texture := rl.LoadTexture("assets/all_cards.png")
+    all_cards_and_piles_texture := rl.LoadTexture("assets/all_cards_and_piles.png")
     card_back_texture := rl.LoadTexture("assets/card_back.png")
 
     selected_card_indices: sa.Small_Array(13, int)
     mouse_pos_on_click: rl.Vector2
     card_pos_on_click: rl.Vector2
     //TODO: Make something more descriptive than Maybe type?
-    original_depot_index: Maybe(int) //nil means it came from the deck
+    top_selected_card_location: CardLocation //nil means it came from the deck
 
     for !rl.WindowShouldClose() {
         
@@ -229,7 +251,7 @@ main :: proc() {
 
         if rl.IsMouseButtonPressed(.LEFT) {
             
-            clicked_on_deck := rl.CheckCollisionPointRec(mouse_pos, rect_v(DECK_OFFSET, CARD_TEXTURE_CARD_DIMS))
+            clicked_on_deck := rl.CheckCollisionPointRec(mouse_pos, rect_v(DECK_POS, CARD_TEXTURE_CARD_DIMS))
             
             if !clicked_on_deck {
                 //Check if a face-up card was selected
@@ -248,19 +270,22 @@ main :: proc() {
                         }
                     }
 
-                    switch loc in card_index_location(&board, selected_index) {
+                    top_selected_card_location = card_index_location(&board, selected_index)
+                    switch loc in top_selected_card_location {
                     case DepotLocation:
                         for card_index in sa.slice(&board.depots[loc.depot_index])[loc.index_in_depot:] {
                             sa.append(&selected_card_indices, card_index) 
                         }
-                        original_depot_index = loc.depot_index
                     
                     case DrawPileLocation: 
                         sa.append(&selected_card_indices, int(loc))
-                        original_depot_index = nil
+
+                    case SuitPileLocation:
+                        card_index := suit_num_to_card_index(loc, board.suit_piles[int(loc)])
+                        sa.append(&selected_card_indices, card_index)
                     
                     case DeckLocation:
-                        //This case is not supposed to be reached. If it was reached, the decks and cards have 
+                        //NOTE: This case should be unreachable. If it was reached, the decks and cards have 
                         //likely gone out of sync with each other
                         assert(false)  
                     }
@@ -284,47 +309,91 @@ main :: proc() {
 
         }
 
+        //TODO: There's likely to be a hidden bug within here, when I tested the game crashed after moving an
+        //ace into one of the suit piles, but I have yet to recreate the bug. So test in debug mode you baffoon!
         if sa.len(selected_card_indices) > 0 && rl.IsMouseButtonReleased(.LEFT) {
                 
             top_selected_card := cards[sa.get(selected_card_indices, 0)]
 
-            //TODO: Consider just going to nearest depot instead of checking for intersection?
-            original_depot_index_index, selected_card_not_from_draw_pile := original_depot_index.?
-            for depot_index in 0..<len(board.depots) {
-                if selected_card_not_from_draw_pile && original_depot_index_index == depot_index do continue
-                
-                depot_min_x := DEPOTS_START.x + DEPOT_X_OFFSET * f32(depot_index)
-                depot_max_x := depot_min_x + CARD_TEXTURE_CARD_DIMS.x
-                selected_card_min_x := top_selected_card.rect.x
-                selected_card_max_x := top_selected_card.rect.x + top_selected_card.rect.width
-                
-                card_min_x_in_depot := selected_card_min_x >= depot_min_x && selected_card_min_x <= depot_max_x
-                card_max_x_in_depot := selected_card_max_x >= depot_min_x && selected_card_max_x <= depot_max_x
-                if card_min_x_in_depot || card_max_x_in_depot {
-                    cards_differ_in_colour := false 
-                    top_is_one_more := false
-
-                    depot_len := sa.len(board.depots[depot_index])
-                    if depot_len > 0 {
-                        top_card_in_depot := cards[sa.get(board.depots[depot_index], depot_len - 1)]
-                        cards_differ_in_colour = !same_colour(top_card_in_depot.suit, top_selected_card.suit)
-                        top_is_one_more = top_card_in_depot.num - top_selected_card.num == 1
-                    }
+            if sa.len(selected_card_indices) == 1 && top_selected_card.rect.y < BANNER_HEIGHT {
+                for suit in Suit {
+                    suit_pile_rect := rect_v(suit_pile_pos(suit), CARD_TEXTURE_CARD_DIMS)
+                    if !rl.CheckCollisionRecs(top_selected_card.rect, suit_pile_rect) do continue
                     
-                    moving_king_to_empty_depot := top_selected_card.num == KING && depot_len == 0
+                    top_card_same_suit := top_selected_card.suit == suit
+                    top_card_is_one_above := top_selected_card.num == board.suit_piles[int(suit)] + 1
 
-                    if (cards_differ_in_colour && top_is_one_more) || moving_king_to_empty_depot {
-                        for card_index in sa.slice(&selected_card_indices) {
-                            sa.append(&board.depots[depot_index], card_index) 
-                        }
-                        if selected_card_not_from_draw_pile {
-                            sa.consume(&board.depots[original_depot_index_index], sa.len(selected_card_indices))
-                        } else {
+                    if top_card_same_suit && top_card_is_one_above {
+                        board.suit_piles[int(suit)] = top_selected_card.num
+
+                        switch loc in top_selected_card_location {
+                        case DepotLocation:
+                            sa.consume(&board.depots[loc.depot_index], sa.len(selected_card_indices))
+                        
+                        case DrawPileLocation:
                             sa.pop_back(&board.draw_pile)
+
+                        case SuitPileLocation:
+                            board.suit_piles[loc] -= 1
+
+                        case DeckLocation:
+                            //NOTE: This should be unreachable, is reached likely means that 
+                            //top_selected_card_location is invalid
+                            assert(false) 
                         }
                     }
-                    
+
                     break
+                }
+            } else {
+                //TODO: Consider just going to nearest depot instead of checking for intersection?
+                for depot_index in 0..<len(board.depots) {
+                    depot_loc, from_depot := top_selected_card_location.(DepotLocation)
+                    if from_depot && depot_loc.depot_index == depot_index do continue
+
+                    depot_min_x := DEPOTS_START.x + DEPOT_X_OFFSET * f32(depot_index)
+                    depot_max_x := depot_min_x + CARD_TEXTURE_CARD_DIMS.x
+                    selected_card_min_x := top_selected_card.rect.x
+                    selected_card_max_x := top_selected_card.rect.x + top_selected_card.rect.width
+
+                    card_min_x_in_depot := selected_card_min_x >= depot_min_x && selected_card_min_x <= depot_max_x
+                    card_max_x_in_depot := selected_card_max_x >= depot_min_x && selected_card_max_x <= depot_max_x
+                    if card_min_x_in_depot || card_max_x_in_depot {
+                        cards_differ_in_colour := false 
+                        top_is_one_more := false
+
+                        depot_len := sa.len(board.depots[depot_index])
+                        if depot_len > 0 {
+                            top_card_in_depot := cards[sa.get(board.depots[depot_index], depot_len - 1)]
+                            cards_differ_in_colour = !same_colour(top_card_in_depot.suit, top_selected_card.suit)
+                            top_is_one_more = top_card_in_depot.num - top_selected_card.num == 1
+                        }
+
+                        moving_king_to_empty_depot := top_selected_card.num == KING && depot_len == 0
+
+                        if (cards_differ_in_colour && top_is_one_more) || moving_king_to_empty_depot {
+                            for card_index in sa.slice(&selected_card_indices) {
+                                sa.append(&board.depots[depot_index], card_index) 
+                            }
+                            switch loc in top_selected_card_location {
+                                case DepotLocation:
+                                    sa.consume(&board.depots[loc.depot_index], sa.len(selected_card_indices))
+                                
+                                case DrawPileLocation:
+                                    sa.pop_back(&board.draw_pile)
+                                
+                                case SuitPileLocation:
+                                    board.suit_piles[loc] -= 1
+                                
+                                case DeckLocation:
+                                    //NOTE: This should be unreachable, is reached likely means that 
+                                    //top_selected_card_location is invalid
+                                    assert(false) 
+                                }
+                        }
+
+                        break
+                    }
                 }
             }
             
@@ -349,13 +418,21 @@ main :: proc() {
         }
 
         for card_index in sa.slice(&board.deck) {
-            cards[card_index].rect = rect_v(DECK_OFFSET, CARD_TEXTURE_CARD_DIMS)
+            cards[card_index].rect = rect_v(DECK_POS, CARD_TEXTURE_CARD_DIMS)
             cards[card_index].face_down = true
         }
 
         for card_index, z_index in sa.slice(&board.draw_pile) {
-            cards[card_index].rect = rect_v(DRAW_PILE_OFFSET, CARD_TEXTURE_CARD_DIMS)
+            cards[card_index].rect = rect_v(DRAW_PILE_START, CARD_TEXTURE_CARD_DIMS)
             cards[card_index].z_index = z_index
+        }
+
+        for suit in Suit {
+            for card_num in ACE..=board.suit_piles[int(suit)] {
+                card_index := suit_num_to_card_index(suit, card_num)
+                cards[card_index].rect = rect_v(suit_pile_pos(suit), CARD_TEXTURE_CARD_DIMS)
+                cards[card_index].z_index = card_num
+            }
         }
 
         if sa.len(selected_card_indices) > 0 {
@@ -379,6 +456,18 @@ main :: proc() {
                 rl.Vector2{SCREEN_WIDTH, BANNER_HEIGHT}, rl.Color{12, 87, 0, 255}
             )
 
+
+            rl.DrawTextureRec(all_cards_and_piles_texture, RESET_DECK_MARKER_TEXTURE_RECT, DECK_POS, rl.WHITE)
+            
+            for suit in Suit {
+                rl.DrawTextureRec(
+                    all_cards_and_piles_texture, 
+                    suit_pile_texture_rect(suit), 
+                    suit_pile_pos(suit), 
+                    rl.WHITE
+                )
+            }
+
             cards_to_draw := slice.clone(cards[:], context.temp_allocator)
 
             compare_by_z_index :: proc (i, j: Card) -> bool { return i.z_index < j.z_index }
@@ -386,7 +475,7 @@ main :: proc() {
 
             for card in cards_to_draw {
                 rl.DrawTextureRec(
-                    all_cards_texture if !card.face_down else card_back_texture, 
+                    all_cards_and_piles_texture if !card.face_down else card_back_texture, 
                     card_texture_rect(card.suit, card.num, card.face_down), 
                     rect_pos(card.rect), 
                     rl.WHITE
