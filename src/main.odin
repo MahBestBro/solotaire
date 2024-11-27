@@ -245,6 +245,8 @@ main :: proc() {
     //TODO: Make something more descriptive than Maybe type?
     top_selected_card_location: CardLocation //nil means it came from the deck
 
+    game_won := false
+
     for !rl.WindowShouldClose() {
         
         mouse_pos := rl.GetMousePosition()
@@ -342,8 +344,6 @@ main :: proc() {
                             assert(false) 
                         }
                     }
-
-                    break
                 }
             } else {
                 //TODO: Consider just going to nearest depot instead of checking for intersection?
@@ -444,6 +444,10 @@ main :: proc() {
             }
         }
 
+        is_face_up :: proc(card: Card) -> bool { return !card.face_down }
+        if slice.all_of_proc(cards[:], is_face_up) do game_won = true
+
+
         
         {
             rl.BeginDrawing()
@@ -465,6 +469,23 @@ main :: proc() {
                     suit_pile_texture_rect(suit), 
                     suit_pile_pos(suit), 
                     rl.WHITE
+                )
+            }
+
+            
+            //TODO: Change font?
+            if game_won {
+                WIN_TEXT :: "You Win!"
+                WIN_TEXT_SIZE :: 50.0
+                WIN_TEXT_SPACING :: 4.0
+                text_dims := rl.MeasureTextEx(rl.GetFontDefault(), WIN_TEXT, WIN_TEXT_SIZE, WIN_TEXT_SPACING)
+                rl.DrawTextEx(
+                    rl.GetFontDefault(), 
+                    WIN_TEXT, 
+                    (rl.Vector2{SCREEN_WIDTH, SCREEN_HEIGHT} - text_dims) / 2.0,
+                    WIN_TEXT_SIZE,
+                    WIN_TEXT_SPACING,
+                    rl.WHITE 
                 )
             }
 
