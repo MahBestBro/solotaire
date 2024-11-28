@@ -29,12 +29,12 @@ RESET_DECK_MARKER_TEXTURE_RECT :: rl.Rectangle{
 }
 
 //TODO: Better name
-BANNER_PAD :: 5
-BANNER_HEIGHT :: CARD_TEXTURE_CARD_DIMS.y + 2 * BANNER_PAD
-DECK_POS :: rl.Vector2{BANNER_PAD, BANNER_PAD}
-DRAW_PILE_START :: rl.Vector2{DECK_POS.x + CARD_TEXTURE_CARD_DIMS.x + 20.0, DECK_POS.y}
-SUIT_PILE_START :: rl.Vector2{DRAW_PILE_START.x + (CARD_TEXTURE_CARD_DIMS.x + 20.0) * 2.0, DECK_POS.y}
-DEPOTS_START :: rl.Vector2{20.0, 20.0 + BANNER_HEIGHT}
+SIDEBAR_PAD :: 5
+SIDEBAR_WIDTH :: CARD_TEXTURE_CARD_DIMS.x + 2 * SIDEBAR_PAD
+DECK_POS :: rl.Vector2{SIDEBAR_PAD, SIDEBAR_PAD}
+DRAW_PILE_START :: rl.Vector2{DECK_POS.x, DECK_POS.y + CARD_TEXTURE_CARD_DIMS.y + 20.0}
+SUIT_PILE_START :: rl.Vector2{SCREEN_WIDTH - SIDEBAR_WIDTH + SIDEBAR_PAD, SIDEBAR_PAD}
+DEPOTS_START :: rl.Vector2{SIDEBAR_WIDTH + 20.0 , 20.0}
 DEPOT_X_OFFSET := (SCREEN_WIDTH - 2 * DEPOTS_START.x) / NUM_DEPOTS
 //The offset from the top of the card required in order to not hide the suit and number
 CARD_STACKED_Y_OFFSET :: 45.0 
@@ -136,7 +136,7 @@ suit_pile_texture_rect :: proc(suit: Suit) -> rl.Rectangle {
 } 
 
 suit_pile_pos :: proc(suit: Suit) -> rl.Vector2 {
-    return SUIT_PILE_START + rl.Vector2{f32(suit) * (CARD_TEXTURE_CARD_DIMS.x + 20.0), 0.0}
+    return SUIT_PILE_START + rl.Vector2{0.0, f32(suit) * (CARD_TEXTURE_CARD_DIMS.y + 5.0)}
 }
 
 //NOTE: We need not do anything for draw_pile since it should just be zero-initialised anyways, which is the 
@@ -316,8 +316,9 @@ main :: proc() {
         if sa.len(selected_card_indices) > 0 && rl.IsMouseButtonReleased(.LEFT) {
                 
             top_selected_card := cards[sa.get(selected_card_indices, 0)]
+            top_selected_card_max_x := top_selected_card.rect.x + top_selected_card.rect.width
 
-            if sa.len(selected_card_indices) == 1 && top_selected_card.rect.y < BANNER_HEIGHT {
+            if sa.len(selected_card_indices) == 1 && top_selected_card_max_x > SCREEN_WIDTH - SIDEBAR_WIDTH {
                 for suit in Suit {
                     suit_pile_rect := rect_v(suit_pile_pos(suit), CARD_TEXTURE_CARD_DIMS)
                     if !rl.CheckCollisionRecs(top_selected_card.rect, suit_pile_rect) do continue
@@ -427,6 +428,16 @@ main :: proc() {
             cards[card_index].z_index = z_index
         }
 
+        //Offset the top two cards so you can see the last 3 drawn cards
+        if sa.len(board.draw_pile) > 0 {
+            y_offset := min(2.0, f32(sa.len(board.draw_pile) - 1)) * CARD_STACKED_Y_OFFSET
+            cards[sa.get(board.draw_pile, sa.len(board.draw_pile) - 1)].rect.y += y_offset
+        }
+        if sa.len(board.draw_pile) > 1 {
+            y_offset := min(1.0, f32(sa.len(board.draw_pile) - 2)) * CARD_STACKED_Y_OFFSET
+            cards[sa.get(board.draw_pile, sa.len(board.draw_pile) - 2)].rect.y += y_offset
+        }
+
         for suit in Suit {
             for card_num in ACE..=board.suit_piles[int(suit)] {
                 card_index := suit_num_to_card_index(suit, card_num)
@@ -447,7 +458,6 @@ main :: proc() {
         is_face_up :: proc(card: Card) -> bool { return !card.face_down }
         if slice.all_of_proc(cards[:], is_face_up) do game_won = true
 
-
         
         {
             rl.BeginDrawing()
@@ -457,9 +467,15 @@ main :: proc() {
 
             rl.DrawRectangleV(
                 rl.Vector2{},
-                rl.Vector2{SCREEN_WIDTH, BANNER_HEIGHT}, rl.Color{12, 87, 0, 255}
+                rl.Vector2{SIDEBAR_WIDTH, SCREEN_HEIGHT}, 
+                rl.Color{12, 87, 0, 255}
             )
 
+            rl.DrawRectangleV(
+                rl.Vector2{SCREEN_WIDTH - SIDEBAR_WIDTH, 0},
+                rl.Vector2{SIDEBAR_WIDTH, SCREEN_HEIGHT}, 
+                rl.Color{12, 87, 0, 255}
+            )
 
             rl.DrawTextureRec(all_cards_and_piles_texture, RESET_DECK_MARKER_TEXTURE_RECT, DECK_POS, rl.WHITE)
             
@@ -471,7 +487,6 @@ main :: proc() {
                     rl.WHITE
                 )
             }
-
             
             //TODO: Change font?
             if game_won {
