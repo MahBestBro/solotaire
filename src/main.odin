@@ -202,7 +202,6 @@ CardMove :: struct {
     card_was_revealed: bool
 }
 
-//TODO: Consider replacing this with just a CardMove{ from = deck_loc, to = suit_pile_loc }?
 CardDraw :: struct { }
 
 UndoAction :: union {
