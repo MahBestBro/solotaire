@@ -174,11 +174,6 @@ initialise_board :: proc(cards: ^[52]Card) -> (board: Board) {
     return
 }
 
-reset_game :: proc(cards: ^[52]Card, board: ^Board, selected_card_indices: ^sa.Small_Array(13, int)) {
-    board^ = initialise_board(cards)
-    sa.clear(selected_card_indices)
-}
-
 DepotLocation :: struct {
     depot_index: int,
     index_in_depot: int
@@ -193,20 +188,6 @@ CardLocation :: union {
     DeckLocation,
     DrawPileLocation,
     SuitPileLocation
-}
-
-CardMove :: struct {
-    from: CardLocation,
-    to: CardLocation,
-    num_cards: int,
-    card_was_revealed: bool
-}
-
-CardDraw :: struct { }
-
-UndoAction :: union {
-    CardMove,
-    CardDraw
 }
 
 card_index_location :: proc(board: ^Board, target_card_index: int) -> CardLocation {
@@ -233,6 +214,131 @@ card_index_location :: proc(board: ^Board, target_card_index: int) -> CardLocati
     return DeckLocation(-1)
 }
 
+CardMove :: struct {
+    from: CardLocation,
+    to: CardLocation,
+    num_cards: int,
+    card_was_revealed: bool
+}
+
+CardDraw :: struct { }
+
+
+UndoAction :: union {
+    CardMove,
+    CardDraw
+}
+
+//TODO: Do some investigation on how big this array needs to be, or just convert it into a dynamic array
+NUM_UNDOS :: 512
+UndoStack :: sa.Small_Array(NUM_UNDOS, UndoAction)
+
+UndoKind :: enum {
+    UNDO,
+    REDO
+}
+
+apply_undo :: proc(undo_kind: UndoKind, game: ^Game) {
+    stack_to_pop := &game.undos if undo_kind == .UNDO else &game.redos
+    stack_to_push := &game.redos if undo_kind == .UNDO else &game.undos
+    
+    switch action in sa.pop_back(stack_to_pop) {
+        case CardMove: 
+            cards_to_move: sa.Small_Array(13, int)
+
+            switch to in action.to {
+                case DepotLocation:
+                    for card_index in sa.slice(&game.board.depots[to.depot_index])[to.index_in_depot:] {
+                        sa.append(&cards_to_move, card_index)
+                    }
+                    for _ in 0..<action.num_cards {
+                        sa.pop_back(&game.board.depots[to.depot_index])
+                    }
+
+                case SuitPileLocation:
+                    assert(action.num_cards == 1)
+                    suit_index := int(to)
+                    sa.append(&cards_to_move, suit_num_to_card_index(to, game.board.suit_piles[suit_index]))
+                    game.board.suit_piles[suit_index] -= 1
+                
+                case DrawPileLocation:
+                    assert(undo_kind == .REDO)
+                    assert(action.num_cards == 1 && sa.len(game.board.draw_pile) > 0)
+                    sa.append(&cards_to_move, sa.pop_back(&game.board.draw_pile))
+
+                case DeckLocation: 
+                    assert(false)
+            }
+
+            assert(sa.len(cards_to_move) > 0 && sa.len(cards_to_move) == action.num_cards)
+
+            switch from in action.from {
+                case DepotLocation:
+                    depot := &game.board.depots[from.depot_index]
+                    
+                    if action.card_was_revealed {
+                        assert(sa.len(depot^) > 0)
+                        if undo_kind == .UNDO do game.cards[sa.get(depot^, sa.len(depot^) - 1)].face_down = true
+                    }
+
+                    for card_index in sa.slice(&cards_to_move) {
+                        sa.append(depot, card_index)
+                    }
+
+                case SuitPileLocation:
+                    assert(sa.len(cards_to_move) == 1)
+                    suit_index := int(from)
+                    game.board.suit_piles[suit_index] += 1 
+                
+                case DrawPileLocation:
+                    assert(sa.len(cards_to_move) == 1)
+                    sa.append(&game.board.draw_pile, sa.pop_back(&cards_to_move))
+                
+                case DeckLocation: 
+                    assert(false)
+            }
+
+            sa.append(
+                stack_to_push, 
+                CardMove{ 
+                    from = action.to, 
+                    to = action.from, 
+                    num_cards = action.num_cards,
+                    card_was_revealed = action.card_was_revealed
+                }
+            )
+        
+        case CardDraw:
+            deck_to_pop := &game.board.draw_pile if undo_kind == .UNDO else &game.board.deck 
+            deck_to_push := &game.board.deck if undo_kind == .UNDO else &game.board.draw_pile 
+            
+            if sa.len(deck_to_pop^) > 0 {
+                sa.append(deck_to_push, sa.pop_back(deck_to_pop)) 
+            } else {
+                //All cards have been drawn/put back, so put all of them back into the other deck
+                for sa.len(deck_to_push^) > 0 {
+                    sa.append(deck_to_pop, sa.pop_back(deck_to_push))
+                }
+            }
+
+            sa.append(stack_to_push, action)
+    }
+}
+
+Game :: struct {
+    cards: [52]Card,
+    board: Board,    
+    undos: UndoStack,
+    redos: UndoStack
+}
+
+reset_game :: proc(game: ^Game) {
+    game.board = initialise_board(&game.cards)
+    sa.clear(&game.undos)
+    sa.clear(&game.redos)
+}
+
+
 main :: proc() {
 
     rl.InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "solotaire")
@@ -240,33 +346,29 @@ main :: proc() {
 
     rl.SetTargetFPS(60)
 
-    cards : [52]Card
+    game : Game
+
     for suit, y in Suit {
         for num in ACE..=KING {
             x := num - 1
             
             card_index := y * KING + x
             
-            cards[card_index].suit = suit
-            cards[card_index].num = num
-            cards[card_index].face_down = false
+            game.cards[card_index].suit = suit
+            game.cards[card_index].num = num
+            game.cards[card_index].face_down = false
         }
     }
 
     all_cards_and_piles_texture := rl.LoadTexture("assets/all_cards_and_piles.png")
     card_back_texture := rl.LoadTexture("assets/card_back.png")
 
-    board : Board
-
     selected_card_indices: sa.Small_Array(13, int)
     mouse_pos_on_click: rl.Vector2
     card_pos_on_click: rl.Vector2
     top_selected_card_from: CardLocation
 
-    //TODO: Do some investigation on how big this array needs to be, or just convert it into a dynamic array
-    undos: sa.Small_Array(512, UndoAction)
-
-    reset_game(&cards, &board, &selected_card_indices)
+    reset_game(&game)
 
     game_won := false
 
@@ -281,7 +383,7 @@ main :: proc() {
             if !clicked_on_deck {
                 //Check if a face-up card was selected
                 potential_selected_indices : sa.Small_Array(52, int)
-                for card, card_index in cards {
+                for card, card_index in game.cards {
                     if !card.face_down && rl.CheckCollisionPointRec(mouse_pos, card.rect) {
                         sa.append(&potential_selected_indices, card_index)
                     }
@@ -290,15 +392,15 @@ main :: proc() {
                 if sa.len(potential_selected_indices) > 0 {
                     selected_index := sa.get(potential_selected_indices, 0)
                     for card_index in sa.slice(&potential_selected_indices)[1:] {
-                        if cards[card_index].z_index > cards[selected_index].z_index {
+                        if game.cards[card_index].z_index > game.cards[selected_index].z_index {
                             selected_index = card_index
                         }
                     }
 
-                    top_selected_card_from = card_index_location(&board, selected_index)
+                    top_selected_card_from = card_index_location(&game.board, selected_index)
                     switch loc in top_selected_card_from {
                     case DepotLocation:
-                        for card_index in sa.slice(&board.depots[loc.depot_index])[loc.index_in_depot:] {
+                        for card_index in sa.slice(&game.board.depots[loc.depot_index])[loc.index_in_depot:] {
                             sa.append(&selected_card_indices, card_index) 
                         }
                     
@@ -306,7 +408,7 @@ main :: proc() {
                         sa.append(&selected_card_indices, int(loc))
 
                     case SuitPileLocation:
-                        card_index := suit_num_to_card_index(loc, board.suit_piles[int(loc)])
+                        card_index := suit_num_to_card_index(loc, game.board.suit_piles[int(loc)])
                         sa.append(&selected_card_indices, card_index)
                     
                     case DeckLocation:
@@ -316,20 +418,21 @@ main :: proc() {
                     }
 
                     mouse_pos_on_click = mouse_pos
-                    card_pos_on_click = rect_pos(cards[selected_index].rect)
+                    card_pos_on_click = rect_pos(game.cards[selected_index].rect)
                 } 
             } else {
-                if sa.len(board.deck) > 0 {
-                    drawn_card_index := sa.pop_back(&board.deck)
-                    sa.append(&board.draw_pile, drawn_card_index)
+                if sa.len(game.board.deck) > 0 {
+                    drawn_card_index := sa.pop_back(&game.board.deck)
+                    sa.append(&game.board.draw_pile, drawn_card_index)
                 } else {
                     //Place draw pile back into deck in draw order
-                    for sa.len(board.draw_pile) > 0 {
-                        sa.append(&board.deck, sa.pop_back(&board.draw_pile))
+                    for sa.len(game.board.draw_pile) > 0 {
+                        sa.append(&game.board.deck, sa.pop_back(&game.board.draw_pile))
                     }
                 }
 
-                sa.append(&undos, CardDraw{})
+                sa.append(&game.undos, CardDraw{})
+                sa.clear(&game.redos)
             }
         }
 
@@ -337,7 +440,7 @@ main :: proc() {
         //ace into one of the suit piles, but I have yet to recreate the bug. So test in debug mode you baffoon!
         if sa.len(selected_card_indices) > 0 && rl.IsMouseButtonReleased(.LEFT) {
                 
-            top_selected_card := cards[sa.get(selected_card_indices, 0)]
+            top_selected_card := game.cards[sa.get(selected_card_indices, 0)]
             top_selected_card_max_x := top_selected_card.rect.x + top_selected_card.rect.width
 
             moved_to : Maybe(CardLocation) = nil
@@ -348,16 +451,16 @@ main :: proc() {
                     if !rl.CheckCollisionRecs(top_selected_card.rect, suit_pile_rect) do continue
                     
                     top_card_same_suit := top_selected_card.suit == suit
-                    top_card_is_one_above := top_selected_card.num == board.suit_piles[int(suit)] + 1
+                    top_card_is_one_above := top_selected_card.num == game.board.suit_piles[int(suit)] + 1
 
                     if top_card_same_suit && top_card_is_one_above {
-                        board.suit_piles[int(suit)] = top_selected_card.num
+                        game.board.suit_piles[int(suit)] = top_selected_card.num
                         moved_to = SuitPileLocation(suit)
                     }
                 }
             } else {
                 //TODO: Consider just going to nearest depot instead of checking for intersection?
-                for depot_index in 0..<len(board.depots) {
+                for depot_index in 0..<len(game.board.depots) {
                     depot_loc, from_depot := top_selected_card_from.(DepotLocation)
                     if from_depot && depot_loc.depot_index == depot_index do continue
 
@@ -372,17 +475,17 @@ main :: proc() {
                         cards_differ_in_colour := false 
                         top_is_one_more := false
 
-                        depot_len := sa.len(board.depots[depot_index])
+                        depot_len := sa.len(game.board.depots[depot_index])
                         if depot_len > 0 {
-                            top_card_in_depot := cards[sa.get(board.depots[depot_index], depot_len - 1)]
-                            cards_differ_in_colour = !same_colour(top_card_in_depot.suit, top_selected_card.suit)
-                            top_is_one_more = top_card_in_depot.num - top_selected_card.num == 1
+                            top_depot_card := game.cards[sa.get(game.board.depots[depot_index], depot_len - 1)]
+                            cards_differ_in_colour = !same_colour(top_depot_card.suit, top_selected_card.suit)
+                            top_is_one_more = top_depot_card.num - top_selected_card.num == 1
                         }
 
                         moving_king_to_empty_depot := top_selected_card.num == KING && depot_len == 0
 
                         if (cards_differ_in_colour && top_is_one_more) || moving_king_to_empty_depot {
-                            depot := &board.depots[depot_index]
+                            depot := &game.board.depots[depot_index]
                             
                             for card_index in sa.slice(&selected_card_indices) {
                                 sa.append(depot, card_index) 
@@ -404,16 +507,17 @@ main :: proc() {
                 
                 switch loc in top_selected_card_from {
                 case DepotLocation:
-                    depot := &board.depots[loc.depot_index]
+                    depot := &game.board.depots[loc.depot_index]
                     sa.consume(depot, sa.len(selected_card_indices))
                     //NOTE: This should work since the cards is not turned face_up until later in the game loop
-                    card_was_revealed = sa.len(depot^) > 0 && cards[sa.get(depot^, sa.len(depot^) - 1)].face_down     
+                    
+                    card_was_revealed = sa.len(depot^) > 0 && game.cards[sa.get(depot^, sa.len(depot^) - 1)].face_down     
                 
                 case DrawPileLocation:
-                    sa.pop_back(&board.draw_pile)
+                    sa.pop_back(&game.board.draw_pile)
 
                 case SuitPileLocation:
-                    board.suit_piles[loc] -= 1
+                    game.board.suit_piles[loc] -= 1
 
                 case DeckLocation:
                     //NOTE: This should be unreachable, is reached likely means that 
@@ -422,7 +526,7 @@ main :: proc() {
                 }
                  
                 sa.append(
-                    &undos, 
+                    &game.undos, 
                     CardMove{ 
                         from = top_selected_card_from, 
                         to = to, 
@@ -430,133 +534,79 @@ main :: proc() {
                         card_was_revealed = card_was_revealed
                     }
                 )
+
+                sa.clear(&game.redos)
             }
 
             sa.clear(&selected_card_indices)
         }
 
-        if rl.IsKeyDown(.LEFT_CONTROL) && rl.IsKeyPressed(.Z) && sa.len(undos) > 0 {
-            switch action in sa.pop_back(&undos) {
-                case CardMove: 
-                    cards_to_move: sa.Small_Array(13, int)
+        if rl.IsKeyDown(.LEFT_CONTROL) && rl.IsKeyPressed(.Z) && sa.len(game.undos) > 0 {
+            apply_undo(.UNDO, &game)
+        }
 
-                    switch to in action.to {
-                        case DepotLocation:
-                            for card_index in sa.slice(&board.depots[to.depot_index])[to.index_in_depot:] {
-                                sa.append(&cards_to_move, card_index)
-                            }
-                            for _ in 0..<action.num_cards {
-                                sa.pop_back(&board.depots[to.depot_index])
-                            }
-
-                        case SuitPileLocation:
-                            assert(action.num_cards == 1)
-                            suit_index := int(to)
-                            sa.append(&cards_to_move, suit_num_to_card_index(to, board.suit_piles[suit_index]))
-                            board.suit_piles[suit_index] -= 1
-                        
-                        //NOTE: Going to a Draw Pile can occur after undoing, so this may need to change when
-                        //generalising for undos and redos
-                        case DeckLocation, DrawPileLocation: 
-                            assert(false)
-                    }
-
-                    assert(sa.len(cards_to_move) > 0)
-
-                    switch from in action.from {
-                        case DepotLocation:
-                            depot := &board.depots[from.depot_index]
-                            
-                            if action.card_was_revealed {
-                                assert(sa.len(depot^) > 0)
-                                cards[sa.get(depot^, sa.len(depot^) - 1)].face_down = true
-                            }
-
-                            for card_index in sa.slice(&cards_to_move) {
-                                sa.append(depot, card_index)
-                            }
-
-                        case SuitPileLocation:
-                            assert(sa.len(cards_to_move) == 1)
-                            suit_index := int(from)
-                            board.suit_piles[suit_index] = sa.pop_back(&cards_to_move)
-                        
-                        case DrawPileLocation:
-                            assert(sa.len(cards_to_move) == 1)
-                            sa.append(&board.draw_pile, sa.pop_back(&cards_to_move))
-                        
-                        case DeckLocation: 
-                            assert(false)
-                    }
-                
-                case CardDraw:
-                    if sa.len(board.draw_pile) > 0 {
-                        sa.append(&board.deck, sa.pop_back(&board.draw_pile)) 
-                    } else {
-                        //Place deck back into draw_pile in draw order
-                        for sa.len(board.deck) > 0 {
-                            sa.append(&board.draw_pile, sa.pop_back(&board.deck))
-                        }
-                    }
-            }
+        if rl.IsKeyDown(.LEFT_CONTROL) && rl.IsKeyPressed(.Y) && sa.len(game.redos) > 0 {
+            apply_undo(.REDO, &game)
         }
 
         if rl.IsKeyDown(.LEFT_CONTROL) && rl.IsKeyPressed(.R) {
-            reset_game(&cards, &board, &selected_card_indices)
+            reset_game(&game)
+            sa.clear(&selected_card_indices)
         }
 
-        for &depot, depot_index in board.depots {
+        for &depot, depot_index in game.board.depots {
             for card_index, y in sa.slice(&depot) {
                 card_offset := rl.Vector2{DEPOT_X_OFFSET * f32(depot_index), CARD_STACKED_Y_OFFSET * f32(y)}
                 card_pos := DEPOTS_START + card_offset
                 
-                cards[card_index].rect = rect_v(card_pos, CARD_TEXTURE_CARD_DIMS)
-                cards[card_index].z_index = y
+                game.cards[card_index].rect = rect_v(card_pos, CARD_TEXTURE_CARD_DIMS)
+                game.cards[card_index].z_index = y
             }
 
-            if sa.len(depot) > 0 do cards[sa.get(depot, sa.len(depot) - 1)].face_down = false
+            if sa.len(depot) > 0 do game.cards[sa.get(depot, sa.len(depot) - 1)].face_down = false
         }
 
-        for card_index in sa.slice(&board.deck) {
-            cards[card_index].rect = rect_v(DECK_POS, CARD_TEXTURE_CARD_DIMS)
-            cards[card_index].face_down = true
+        for card_index in sa.slice(&game.board.deck) {
+            game.cards[card_index].rect = rect_v(DECK_POS, CARD_TEXTURE_CARD_DIMS)
+            game.cards[card_index].face_down = true
         }
 
-        for card_index, z_index in sa.slice(&board.draw_pile) {
-            cards[card_index].rect = rect_v(DRAW_PILE_START, CARD_TEXTURE_CARD_DIMS)
-            cards[card_index].z_index = z_index
-            cards[card_index].face_down = false
+        for card_index, z_index in sa.slice(&game.board.draw_pile) {
+            game.cards[card_index].rect = rect_v(DRAW_PILE_START, CARD_TEXTURE_CARD_DIMS)
+            game.cards[card_index].z_index = z_index
+            game.cards[card_index].face_down = false
         }
 
         //Offset the top two cards so you can see the last 3 drawn cards
-        if sa.len(board.draw_pile) > 0 {
-            y_offset := min(2.0, f32(sa.len(board.draw_pile) - 1)) * CARD_STACKED_Y_OFFSET
-            cards[sa.get(board.draw_pile, sa.len(board.draw_pile) - 1)].rect.y += y_offset
+        //TODO: Make the bottom two cards uninteractable
+        if sa.len(game.board.draw_pile) > 0 {
+            y_offset := min(2.0, f32(sa.len(game.board.draw_pile) - 1)) * CARD_STACKED_Y_OFFSET
+            game.cards[sa.get(game.board.draw_pile, sa.len(game.board.draw_pile) - 1)].rect.y += y_offset
         }
-        if sa.len(board.draw_pile) > 1 {
-            y_offset := min(1.0, f32(sa.len(board.draw_pile) - 2)) * CARD_STACKED_Y_OFFSET
-            cards[sa.get(board.draw_pile, sa.len(board.draw_pile) - 2)].rect.y += y_offset
+        if sa.len(game.board.draw_pile) > 1 {
+            y_offset := min(1.0, f32(sa.len(game.board.draw_pile) - 2)) * CARD_STACKED_Y_OFFSET
+            game.cards[sa.get(game.board.draw_pile, sa.len(game.board.draw_pile) - 2)].rect.y += y_offset
         }
 
         for suit in Suit {
-            for card_num in ACE..=board.suit_piles[int(suit)] {
+            for card_num in ACE..=game.board.suit_piles[int(suit)] {
                 card_index := suit_num_to_card_index(suit, card_num)
-                cards[card_index].rect = rect_v(suit_pile_pos(suit), CARD_TEXTURE_CARD_DIMS)
-                cards[card_index].z_index = card_num
+                game.cards[card_index].rect = rect_v(suit_pile_pos(suit), CARD_TEXTURE_CARD_DIMS)
+                game.cards[card_index].z_index = card_num
             }
         }
 
         if sa.len(selected_card_indices) > 0 {
             held_card_pos := card_pos_on_click + (mouse_pos - mouse_pos_on_click)
             for card_index, y in sa.slice(&selected_card_indices) {
-                cards[card_index].rect.x = held_card_pos.x 
-                cards[card_index].rect.y = held_card_pos.y + CARD_STACKED_Y_OFFSET * f32(y)
-                cards[card_index].z_index = 52 + y
+                game.cards[card_index].rect.x = held_card_pos.x 
+                game.cards[card_index].rect.y = held_card_pos.y + CARD_STACKED_Y_OFFSET * f32(y)
+                game.cards[card_index].z_index = 52 + y
             }
         }
 
         is_face_up :: proc(card: Card) -> bool { return !card.face_down }
-        if slice.all_of_proc(cards[:], is_face_up) do game_won = true
+        if slice.all_of_proc(game.cards[:], is_face_up) do game_won = true
 
         
         {
@@ -604,7 +654,7 @@ main :: proc() {
                 )
             }
 
-            cards_to_draw := slice.clone(cards[:], context.temp_allocator)
+            cards_to_draw := slice.clone(game.cards[:], context.temp_allocator)
 
             compare_by_z_index :: proc (i, j: Card) -> bool { return i.z_index < j.z_index }
             slice.sort_by(cards_to_draw, compare_by_z_index)
