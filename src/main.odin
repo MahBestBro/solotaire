@@ -208,7 +208,7 @@ card_index_location :: proc(board: ^Board, target_card_index: int) -> CardLocati
     }
 
     suit, num := card_index_to_suit_num(target_card_index)
-    if board.suit_piles[int(suit)] <= num do return suit
+    if board.suit_piles[int(suit)] >= num do return suit
 
     assert(false) //NOTE: This should be unreachable, is reached likely means target_card_index is invalid
     return DeckLocation(-1)
@@ -675,6 +675,17 @@ main :: proc() {
                     rl.WHITE
                 )
             }
+
+            BUTTON_PAD :: 10
+            BUTTON_HEIGHT :: 40 
+            rl.DrawRectangle(
+                BUTTON_PAD, 
+                SCREEN_HEIGHT - BUTTON_HEIGHT - BUTTON_PAD, 
+                i32(SIDEBAR_WIDTH) - 2 * BUTTON_PAD, 
+                BUTTON_HEIGHT, 
+                rl.GREEN
+            )
+
 
             //rl.DrawFPS(10, 10)
         }
