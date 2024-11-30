@@ -200,11 +200,11 @@ card_index_location :: proc(board: ^Board, target_card_index: int) -> CardLocati
     }
 
     for card_index, index_in_deck in sa.slice(&board.deck) {
-        if card_index == target_card_index do return DeckLocation(card_index)
+        if card_index == target_card_index do return DeckLocation(index_in_deck)
     }
 
-    for card_index, index_in_deck in sa.slice(&board.draw_pile) {
-        if card_index == target_card_index do return DrawPileLocation(card_index)
+    for card_index, index_in_draw_pile in sa.slice(&board.draw_pile) {
+        if card_index == target_card_index do return DrawPileLocation(index_in_draw_pile)
     }
 
     suit, num := card_index_to_suit_num(target_card_index)
@@ -381,12 +381,20 @@ main :: proc() {
             clicked_on_deck := rl.CheckCollisionPointRec(mouse_pos, rect_v(DECK_POS, CARD_TEXTURE_CARD_DIMS))
             
             if !clicked_on_deck {
-                //Check if a face-up card was selected
+                //Filter out candidate cards
                 potential_selected_indices : sa.Small_Array(52, int)
                 for card, card_index in game.cards {
-                    if !card.face_down && rl.CheckCollisionPointRec(mouse_pos, card.rect) {
-                        sa.append(&potential_selected_indices, card_index)
-                    }
+                    //NOTE: Using this guard to avoid costy process of searching up card location (probs won't
+                    //have a big impact, but it's cheap to do)
+                    if card.face_down || !rl.CheckCollisionPointRec(mouse_pos, card.rect) do continue
+
+                    //NOTE: This makes the loop O(n^2). If that hurts performance, come up with better
+                    //approach
+                    card_loc := card_index_location(&game.board, card_index)
+                    dp_loc, ok := card_loc.(DrawPileLocation)
+                    can_be_played_from_draw_pile := !ok || int(dp_loc) == sa.len(game.board.draw_pile) - 1
+                    
+                    if can_be_played_from_draw_pile do sa.append(&potential_selected_indices, card_index)
                 }
 
                 if sa.len(potential_selected_indices) > 0 {
@@ -396,6 +404,7 @@ main :: proc() {
                             selected_index = card_index
                         }
                     }
+                    
 
                     top_selected_card_from = card_index_location(&game.board, selected_index)
                     switch loc in top_selected_card_from {
@@ -405,7 +414,7 @@ main :: proc() {
                         }
                     
                     case DrawPileLocation: 
-                        sa.append(&selected_card_indices, int(loc))
+                        sa.append(&selected_card_indices, selected_index)
 
                     case SuitPileLocation:
                         card_index := suit_num_to_card_index(loc, game.board.suit_piles[int(loc)])
@@ -578,7 +587,6 @@ main :: proc() {
         }
 
         //Offset the top two cards so you can see the last 3 drawn cards
-        //TODO: Make the bottom two cards uninteractable
         if sa.len(game.board.draw_pile) > 0 {
             y_offset := min(2.0, f32(sa.len(game.board.draw_pile) - 1)) * CARD_STACKED_Y_OFFSET
             game.cards[sa.get(game.board.draw_pile, sa.len(game.board.draw_pile) - 1)].rect.y += y_offset
