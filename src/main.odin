@@ -32,11 +32,15 @@ RESET_DECK_MARKER_TEXTURE_RECT :: rl.Rectangle{
 //TODO: Better name
 SIDEBAR_PAD :: 5
 SIDEBAR_WIDTH :: CARD_TEXTURE_CARD_DIMS.x + 2 * SIDEBAR_PAD
+
 DECK_POS :: rl.Vector2{SIDEBAR_PAD, SIDEBAR_PAD}
 DRAW_PILE_START :: rl.Vector2{DECK_POS.x, DECK_POS.y + CARD_TEXTURE_CARD_DIMS.y + 20.0}
 SUIT_PILE_START :: rl.Vector2{SCREEN_WIDTH - SIDEBAR_WIDTH + SIDEBAR_PAD, SIDEBAR_PAD}
+
 DEPOTS_START :: rl.Vector2{SIDEBAR_WIDTH + 20.0 , 20.0}
 DEPOT_X_OFFSET := (SCREEN_WIDTH - 2 * DEPOTS_START.x) / NUM_DEPOTS
+
+CARD_DIMS :: CARD_TEXTURE_CARD_DIMS
 //The offset from the top of the card required in order to not hide the suit and number
 CARD_STACKED_Y_OFFSET :: 45.0 
 
@@ -69,7 +73,7 @@ Card :: struct {
 
     z_index: int,
     face_down: bool,
-    rect: rl.Rectangle //TODO: Just have pos? Or take out of struct and calculate instead
+    pos: rl.Vector2
 }
 
 suit_num_to_card_index :: proc(suit: Suit, num: int) -> int {
@@ -145,7 +149,7 @@ suit_pile_texture_rect :: proc(suit: Suit) -> rl.Rectangle {
 } 
 
 suit_pile_pos :: proc(suit: Suit) -> rl.Vector2 {
-    return SUIT_PILE_START + rl.Vector2{0.0, f32(suit) * (CARD_TEXTURE_CARD_DIMS.y + 5.0)}
+    return SUIT_PILE_START + rl.Vector2{0.0, f32(suit) * (CARD_DIMS.y + 5.0)}
 }
 
 //NOTE: We need not do anything for draw_pile or suit_piles since they just need to be zero-initialised, which is 
@@ -377,16 +381,12 @@ main :: proc() {
 
     game : Game
 
-    for suit, y in Suit {
-        for num in ACE..=KING {
-            x := num - 1
-            
-            card_index := y * KING + x
-            
-            game.cards[card_index].suit = suit
-            game.cards[card_index].num = num
-            game.cards[card_index].face_down = false
-        }
+    for card, card_index in game.cards {
+        suit, num := card_index_to_suit_num(card_index)
+        
+        game.cards[card_index].suit = suit
+        game.cards[card_index].num = num
+        game.cards[card_index].face_down = false
     }
 
     all_cards_and_piles_texture := rl.LoadTexture("assets/all_cards_and_piles.png")
@@ -407,7 +407,7 @@ main :: proc() {
 
         if rl.IsMouseButtonPressed(.LEFT) {
             
-            clicked_on_deck := rl.CheckCollisionPointRec(mouse_pos, rect_v(DECK_POS, CARD_TEXTURE_CARD_DIMS))
+            clicked_on_deck := rl.CheckCollisionPointRec(mouse_pos, rect_v(DECK_POS, CARD_DIMS))
             
             if !clicked_on_deck {
                 //Filter out candidate cards
@@ -415,7 +415,8 @@ main :: proc() {
                 for card, card_index in game.cards {
                     //NOTE: Using this guard to avoid costy process of searching up card location (probs won't
                     //have a big impact, but it's cheap to do)
-                    if card.face_down || !rl.CheckCollisionPointRec(mouse_pos, card.rect) do continue
+                    card_rect := rect_v(card.pos, CARD_DIMS)
+                    if card.face_down || !rl.CheckCollisionPointRec(mouse_pos, card_rect) do continue
 
                     //NOTE: This makes the loop O(n^2). If that hurts performance, come up with better
                     //approach
@@ -456,7 +457,7 @@ main :: proc() {
                     }
 
                     mouse_pos_on_click = mouse_pos
-                    card_pos_on_click = rect_pos(game.cards[selected_index].rect)
+                    card_pos_on_click = game.cards[selected_index].pos
                 } 
             } else {
                 if sa.len(game.board.deck) > 0 {
@@ -479,14 +480,15 @@ main :: proc() {
         if sa.len(selected_card_indices) > 0 && rl.IsMouseButtonReleased(.LEFT) {
                 
             top_selected_card := game.cards[sa.get(selected_card_indices, 0)]
-            top_selected_card_max_x := top_selected_card.rect.x + top_selected_card.rect.width
+            top_selected_card_max_x := top_selected_card.pos.x + CARD_DIMS.x
 
             moved_to : Maybe(CardLocation) = nil
 
             if sa.len(selected_card_indices) == 1 && top_selected_card_max_x > SCREEN_WIDTH - SIDEBAR_WIDTH {
                 for suit in Suit {
-                    suit_pile_rect := rect_v(suit_pile_pos(suit), CARD_TEXTURE_CARD_DIMS)
-                    if !rl.CheckCollisionRecs(top_selected_card.rect, suit_pile_rect) do continue
+                    suit_pile_rect := rect_v(suit_pile_pos(suit), CARD_DIMS)
+                    top_selected_card_rect := rect_v(top_selected_card.pos, CARD_DIMS)
+                    if !rl.CheckCollisionRecs(top_selected_card_rect, suit_pile_rect) do continue
                     
                     top_card_same_suit := top_selected_card.suit == suit
                     top_card_is_one_above := top_selected_card.num == game.board.suit_piles[int(suit)] + 1
@@ -503,9 +505,9 @@ main :: proc() {
                     if from_depot && depot_loc.depot_index == depot_index do continue
 
                     depot_min_x := DEPOTS_START.x + DEPOT_X_OFFSET * f32(depot_index)
-                    depot_max_x := depot_min_x + CARD_TEXTURE_CARD_DIMS.x
-                    selected_card_min_x := top_selected_card.rect.x
-                    selected_card_max_x := top_selected_card.rect.x + top_selected_card.rect.width
+                    depot_max_x := depot_min_x + CARD_DIMS.x
+                    selected_card_min_x := top_selected_card.pos.x
+                    selected_card_max_x := top_selected_card.pos.x + CARD_DIMS.x
 
                     card_min_x_in_depot := selected_card_min_x >= depot_min_x && selected_card_min_x <= depot_max_x
                     card_max_x_in_depot := selected_card_max_x >= depot_min_x && selected_card_max_x <= depot_max_x
@@ -616,9 +618,8 @@ main :: proc() {
         for &depot, depot_index in game.board.depots {
             for card_index, y in sa.slice(&depot) {
                 card_offset := rl.Vector2{DEPOT_X_OFFSET * f32(depot_index), CARD_STACKED_Y_OFFSET * f32(y)}
-                card_pos := DEPOTS_START + card_offset
                 
-                game.cards[card_index].rect = rect_v(card_pos, CARD_TEXTURE_CARD_DIMS)
+                game.cards[card_index].pos = DEPOTS_START + card_offset
                 game.cards[card_index].z_index = y
             }
 
@@ -626,12 +627,12 @@ main :: proc() {
         }
 
         for card_index in sa.slice(&game.board.deck) {
-            game.cards[card_index].rect = rect_v(DECK_POS, CARD_TEXTURE_CARD_DIMS)
+            game.cards[card_index].pos = DECK_POS
             game.cards[card_index].face_down = true
         }
 
         for card_index, z_index in sa.slice(&game.board.draw_pile) {
-            game.cards[card_index].rect = rect_v(DRAW_PILE_START, CARD_TEXTURE_CARD_DIMS)
+            game.cards[card_index].pos = DRAW_PILE_START
             game.cards[card_index].z_index = z_index
             game.cards[card_index].face_down = false
         }
@@ -639,17 +640,17 @@ main :: proc() {
         //Offset the top two cards so you can see the last 3 drawn cards
         if sa.len(game.board.draw_pile) > 0 {
             y_offset := min(2.0, f32(sa.len(game.board.draw_pile) - 1)) * CARD_STACKED_Y_OFFSET
-            game.cards[sa.get(game.board.draw_pile, sa.len(game.board.draw_pile) - 1)].rect.y += y_offset
+            game.cards[sa.get(game.board.draw_pile, sa.len(game.board.draw_pile) - 1)].pos.y += y_offset
         }
         if sa.len(game.board.draw_pile) > 1 {
             y_offset := min(1.0, f32(sa.len(game.board.draw_pile) - 2)) * CARD_STACKED_Y_OFFSET
-            game.cards[sa.get(game.board.draw_pile, sa.len(game.board.draw_pile) - 2)].rect.y += y_offset
+            game.cards[sa.get(game.board.draw_pile, sa.len(game.board.draw_pile) - 2)].pos.y += y_offset
         }
 
         for suit in Suit {
             for card_num in ACE..=game.board.suit_piles[int(suit)] {
                 card_index := suit_num_to_card_index(suit, card_num)
-                game.cards[card_index].rect = rect_v(suit_pile_pos(suit), CARD_TEXTURE_CARD_DIMS)
+                game.cards[card_index].pos = suit_pile_pos(suit)
                 game.cards[card_index].z_index = card_num
             }
         }
@@ -657,8 +658,8 @@ main :: proc() {
         if sa.len(selected_card_indices) > 0 {
             held_card_pos := card_pos_on_click + (mouse_pos - mouse_pos_on_click)
             for card_index, y in sa.slice(&selected_card_indices) {
-                game.cards[card_index].rect.x = held_card_pos.x 
-                game.cards[card_index].rect.y = held_card_pos.y + CARD_STACKED_Y_OFFSET * f32(y)
+                game.cards[card_index].pos.x = held_card_pos.x 
+                game.cards[card_index].pos.y = held_card_pos.y + CARD_STACKED_Y_OFFSET * f32(y)
                 game.cards[card_index].z_index = 52 + y
             }
         }
@@ -723,7 +724,7 @@ main :: proc() {
                 rl.DrawTextureRec(
                     all_cards_and_piles_texture if !card.face_down else card_back_texture, 
                     card_texture_rect(card.suit, card.num, card.face_down), 
-                    rect_pos(card.rect), 
+                    card.pos, 
                     rl.WHITE
                 )
             }
