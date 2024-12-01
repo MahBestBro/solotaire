@@ -285,10 +285,9 @@ apply_undo :: proc(undo_kind: UndoKind, game: ^Game) {
                 case DepotLocation:
                     depot := &game.board.depots[from.depot_index]
                     
-                    if action.card_was_revealed {
-                        //TODO: Program crashed here in testing, do some debugging and find out what happened
+                    if action.card_was_revealed && undo_kind == .UNDO {
                         assert(sa.len(depot^) > 0)
-                        if undo_kind == .UNDO do game.cards[sa.get(depot^, sa.len(depot^) - 1)].face_down = true
+                        game.cards[sa.get(depot^, sa.len(depot^) - 1)].face_down = true
                     }
 
                     for card_index in sa.slice(&cards_to_move) {
