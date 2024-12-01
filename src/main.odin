@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:math/rand"
 import sa "core:container/small_array"
 import "core:slice"
+import "core:strings"
 
 import rl "vendor:raylib"
 
@@ -38,6 +39,10 @@ DEPOTS_START :: rl.Vector2{SIDEBAR_WIDTH + 20.0 , 20.0}
 DEPOT_X_OFFSET := (SCREEN_WIDTH - 2 * DEPOTS_START.x) / NUM_DEPOTS
 //The offset from the top of the card required in order to not hide the suit and number
 CARD_STACKED_Y_OFFSET :: 45.0 
+
+BUTTON_PAD :: 10
+BUTTON_WIDTH :: SIDEBAR_WIDTH - 2 * BUTTON_PAD
+BUTTON_HEIGHT :: 40 
 
 //TODO: Convert into enum?
 ACE :: 1
@@ -100,6 +105,10 @@ rect_v :: proc(pos: rl.Vector2, dims: rl.Vector2) -> rl.Rectangle {
 
 rect_pos :: proc(rect: rl.Rectangle) -> rl.Vector2 {
     return rl.Vector2{rect.x, rect.y}
+}
+
+rect_dims :: proc(rect: rl.Rectangle) -> rl.Vector2 {
+    return rl.Vector2{rect.width, rect.height}
 }
 
 move_rect :: proc(rect: rl.Rectangle, delta: rl.Vector2) -> rl.Rectangle {
@@ -277,6 +286,7 @@ apply_undo :: proc(undo_kind: UndoKind, game: ^Game) {
                     depot := &game.board.depots[from.depot_index]
                     
                     if action.card_was_revealed {
+                        //TODO: Program crashed here in testing, do some debugging and find out what happened
                         assert(sa.len(depot^) > 0)
                         if undo_kind == .UNDO do game.cards[sa.get(depot^, sa.len(depot^) - 1)].face_down = true
                     }
@@ -336,6 +346,26 @@ reset_game :: proc(game: ^Game) {
     game.board = initialise_board(&game.cards)
     sa.clear(&game.undos)
     sa.clear(&game.redos)
+}
+
+draw_button :: proc(rect: rl.Rectangle, text: string) {
+    BUTTON_TEXT_SIZE :: 20.0
+    BUTTON_TEXT_SPACING :: 2.0
+    BUTTON_BACKGROUND_COLOUR :: rl.Color{135, 191, 126, 255}
+    BUTTON_TEXT_COLOUR :: rl.WHITE
+    
+    rl.DrawRectangleRec(rect, BUTTON_BACKGROUND_COLOUR)
+    
+    text_c := strings.clone_to_cstring(text, context.temp_allocator)
+    text_dims := rl.MeasureTextEx(rl.GetFontDefault(), text_c, BUTTON_TEXT_SIZE, BUTTON_TEXT_SPACING)
+    rl.DrawTextEx(
+        rl.GetFontDefault(), 
+        text_c, 
+        rect_pos(rect) + (rect_dims(rect) - text_dims) / 2.0,
+        BUTTON_TEXT_SIZE,
+        BUTTON_TEXT_SPACING,
+        BUTTON_TEXT_COLOUR 
+    )
 }
 
 
@@ -518,8 +548,8 @@ main :: proc() {
                 case DepotLocation:
                     depot := &game.board.depots[loc.depot_index]
                     sa.consume(depot, sa.len(selected_card_indices))
-                    //NOTE: This should work since the cards is not turned face_up until later in the game loop
                     
+                    //NOTE: This should work since the cards is not turned face_up until later in the game loop
                     card_was_revealed = sa.len(depot^) > 0 && game.cards[sa.get(depot^, sa.len(depot^) - 1)].face_down     
                 
                 case DrawPileLocation:
@@ -550,18 +580,39 @@ main :: proc() {
             sa.clear(&selected_card_indices)
         }
 
-        if rl.IsKeyDown(.LEFT_CONTROL) && rl.IsKeyPressed(.Z) && sa.len(game.undos) > 0 {
+        NUM_BUTTONS :: 3
+        BUTTON_RELATIVE_Y_START :: (BUTTON_HEIGHT + BUTTON_PAD) * NUM_BUTTONS
+
+        undo_button_rect  := rl.Rectangle{
+            x = BUTTON_PAD,
+            y = SCREEN_HEIGHT - BUTTON_RELATIVE_Y_START,
+            width = BUTTON_WIDTH,
+            height = BUTTON_HEIGHT
+        }
+        pressed_undo_button := 
+            rl.IsMouseButtonPressed(.LEFT) && rl.CheckCollisionPointRec(mouse_pos, undo_button_rect)
+        pressed_undo_keys := rl.IsKeyDown(.LEFT_CONTROL) && rl.IsKeyPressed(.Z)
+        if (pressed_undo_button || pressed_undo_keys) && sa.len(game.undos) > 0 {
             apply_undo(.UNDO, &game)
         }
 
-        if rl.IsKeyDown(.LEFT_CONTROL) && rl.IsKeyPressed(.Y) && sa.len(game.redos) > 0 {
+        redo_button_rect := move_rect(undo_button_rect, rl.Vector2{0.0, BUTTON_HEIGHT + BUTTON_PAD})
+        pressed_redo_button := 
+            rl.IsMouseButtonPressed(.LEFT) && rl.CheckCollisionPointRec(mouse_pos, redo_button_rect)
+        pressed_redo_keys := rl.IsKeyDown(.LEFT_CONTROL) && rl.IsKeyPressed(.Y)
+        if (pressed_redo_button || pressed_redo_keys) && sa.len(game.redos) > 0 {
             apply_undo(.REDO, &game)
         }
 
-        if rl.IsKeyDown(.LEFT_CONTROL) && rl.IsKeyPressed(.R) {
+        new_game_button_rect := move_rect(redo_button_rect, rl.Vector2{0.0, BUTTON_HEIGHT + BUTTON_PAD})
+        pressed_new_game_button := 
+            rl.IsMouseButtonPressed(.LEFT) && rl.CheckCollisionPointRec(mouse_pos, new_game_button_rect)
+        pressed_new_game_keys := rl.IsKeyDown(.LEFT_CONTROL) && rl.IsKeyPressed(.R)
+        if pressed_new_game_button || pressed_new_game_keys {
             reset_game(&game)
             sa.clear(&selected_card_indices)
         }
+
 
         for &depot, depot_index in game.board.depots {
             for card_index, y in sa.slice(&depot) {
@@ -623,16 +674,18 @@ main :: proc() {
 
             rl.ClearBackground(rl.Color{17, 128, 0, 255})
 
+            SIDEBAR_COLOUR :: rl.Color{12, 87, 0, 255}
+
             rl.DrawRectangleV(
                 rl.Vector2{},
                 rl.Vector2{SIDEBAR_WIDTH, SCREEN_HEIGHT}, 
-                rl.Color{12, 87, 0, 255}
+                SIDEBAR_COLOUR
             )
 
             rl.DrawRectangleV(
                 rl.Vector2{SCREEN_WIDTH - SIDEBAR_WIDTH, 0},
                 rl.Vector2{SIDEBAR_WIDTH, SCREEN_HEIGHT}, 
-                rl.Color{12, 87, 0, 255}
+                SIDEBAR_COLOUR
             )
 
             rl.DrawTextureRec(all_cards_and_piles_texture, RESET_DECK_MARKER_TEXTURE_RECT, DECK_POS, rl.WHITE)
@@ -676,16 +729,9 @@ main :: proc() {
                 )
             }
 
-            BUTTON_PAD :: 10
-            BUTTON_HEIGHT :: 40 
-            rl.DrawRectangle(
-                BUTTON_PAD, 
-                SCREEN_HEIGHT - BUTTON_HEIGHT - BUTTON_PAD, 
-                i32(SIDEBAR_WIDTH) - 2 * BUTTON_PAD, 
-                BUTTON_HEIGHT, 
-                rl.GREEN
-            )
-
+            draw_button(undo_button_rect, "UNDO")
+            draw_button(redo_button_rect, "REDO")
+            draw_button(new_game_button_rect, "NEW")
 
             //rl.DrawFPS(10, 10)
         }
