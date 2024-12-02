@@ -160,6 +160,21 @@ suit_pile_texture_rect :: proc(suit: Suit) -> rl.Rectangle {
     return rect_v(CARD_TEXTURE_START_OFFSET + offset, CARD_TEXTURE_CARD_DIMS)
 } 
 
+CardBack :: enum {
+    DEFAULT,
+    BANJY,
+    THARG,
+    BATMAN
+}
+
+card_back_texture_rect :: proc(card_back: CardBack) -> rl.Rectangle {
+    offset := rl.Vector2{
+        (CARD_TEXTURE_CARD_DIMS.x + CARD_TEXTURE_X_GAP) * (5.0 + f32(card_back)), 
+        (CARD_TEXTURE_CARD_DIMS.y + CARD_TEXTURE_Y_GAP) * 4.0
+    }
+    return rect_v(CARD_TEXTURE_START_OFFSET + offset, CARD_TEXTURE_CARD_DIMS)
+}
+
 suit_pile_pos :: proc(suit: Suit) -> rl.Vector2 {
     return SUIT_PILE_START + rl.Vector2{0.0, f32(suit) * (CARD_DIMS.y + 5.0)}
 }
@@ -414,8 +429,9 @@ main :: proc() {
         game.cards[card_index].face_down = false
     }
 
-    all_cards_and_piles_texture := rl.LoadTexture("assets/all_cards_and_piles.png")
-    card_back_texture := rl.LoadTexture("assets/card_back.png")
+    sprite_sheet := rl.LoadTexture("assets/sprite_sheet.png")
+
+    card_back := CardBack.DEFAULT
 
     selected_card_indices: sa.Small_Array(13, int)
     mouse_pos_on_click: rl.Vector2
@@ -652,6 +668,11 @@ main :: proc() {
             sa.clear(&selected_card_indices)
         }
 
+        if rl.IsKeyPressed(.ONE) do card_back = CardBack(0)
+        if rl.IsKeyPressed(.TWO) do card_back = CardBack(1)
+        if rl.IsKeyPressed(.THREE) do card_back = CardBack(2)
+        if rl.IsKeyPressed(.FOUR) do card_back = CardBack(3)
+
 
         for &depot, depot_index in game.board.depots {
             for card_index, y in sa.slice(&depot) {
@@ -744,11 +765,11 @@ main :: proc() {
                 SIDEBAR_COLOUR
             )
 
-            rl.DrawTextureRec(all_cards_and_piles_texture, RESET_DECK_MARKER_TEXTURE_RECT, DECK_POS, rl.WHITE)
+            rl.DrawTextureRec(sprite_sheet, RESET_DECK_MARKER_TEXTURE_RECT, DECK_POS, rl.WHITE)
             
             for suit in Suit {
                 rl.DrawTextureRec(
-                    all_cards_and_piles_texture, 
+                    sprite_sheet, 
                     suit_pile_texture_rect(suit), 
                     suit_pile_pos(suit), 
                     rl.WHITE
@@ -777,12 +798,10 @@ main :: proc() {
             slice.sort_by(cards_to_draw, compare_by_z_index)
 
             for card in cards_to_draw {
-                rl.DrawTextureRec(
-                    all_cards_and_piles_texture if !card.face_down else card_back_texture, 
-                    card_texture_rect(card.suit, card.num, card.face_down), 
-                    card.pos, 
-                    rl.WHITE
-                )
+                texture_rect := card_texture_rect(card.suit, card.num, card.face_down)
+                if card.face_down do texture_rect = card_back_texture_rect(card_back)
+
+                rl.DrawTextureRec(sprite_sheet, texture_rect, card.pos, rl.WHITE)
             }
 
             draw_button(undo_button_rect, "UNDO")
