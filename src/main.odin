@@ -417,6 +417,9 @@ main :: proc() {
     rl.InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "solotaire")
     defer rl.CloseWindow()
 
+    rl.InitAudioDevice()
+    defer rl.CloseAudioDevice()
+
     rl.SetTargetFPS(60)
 
     game : Game
@@ -430,6 +433,47 @@ main :: proc() {
     }
 
     sprite_sheet := rl.LoadTexture("assets/sprite_sheet.png")
+
+    deck_shuffle_sound := rl.LoadSound("assets/deck_shuffle.wav")
+    defer rl.UnloadSound(deck_shuffle_sound)
+
+    deck_reset_sounds := [3]rl.Sound{
+        rl.LoadSound("assets/deck_reset_1.wav"),
+        rl.LoadSound("assets/deck_reset_2.wav"),
+        rl.LoadSound("assets/deck_reset_3.wav")
+    } 
+    defer {
+        for sound in deck_reset_sounds {
+            rl.UnloadSound(sound)
+        }
+    }
+
+    card_draw_sounds := [4]rl.Sound{
+        rl.LoadSound("assets/card_draw_1.wav"),
+        rl.LoadSound("assets/card_draw_2.wav"),
+        rl.LoadSound("assets/card_draw_3.wav"),
+        rl.LoadSound("assets/card_draw_4.wav")
+    }
+    defer {
+        for sound in card_draw_sounds {
+            rl.UnloadSound(sound)
+        }
+    }
+
+    card_place_sounds := [5]rl.Sound{
+        rl.LoadSound("assets/card_place_1.wav"),
+        rl.LoadSound("assets/card_place_2.wav"),
+        rl.LoadSound("assets/card_place_3.wav"),
+        rl.LoadSound("assets/card_place_4.wav"),
+        rl.LoadSound("assets/card_place_5.wav")
+    }
+    defer {
+        for sound in card_place_sounds {
+            rl.UnloadSound(sound)
+        }
+    }
+
+    sound_index := 0
 
     card_back := CardBack.DEFAULT
 
@@ -511,6 +555,9 @@ main :: proc() {
                     for i in top_cards_start..<draw_pile_len {
                         start_card_movement(&game.cards[sa.get(game.board.draw_pile, i)])
                     }
+
+                    sound := rand.choice(card_draw_sounds[:])
+                    rl.PlaySound(sound)
                 } else {
                     //Place draw pile back into deck in draw order
                     for sa.len(game.board.draw_pile) > 0 {
@@ -519,6 +566,9 @@ main :: proc() {
 
                         start_card_movement(&game.cards[card_index])
                     }
+
+                    sound := rand.choice(deck_reset_sounds[:])
+                    rl.PlaySound(sound)
                 }
 
                 sa.append(&game.undos, CardDraw{})
@@ -526,8 +576,6 @@ main :: proc() {
             }
         }
 
-        //TODO: There's likely to be a hidden bug within here, when I tested the game crashed after moving an
-        //ace into one of the suit piles, but I have yet to recreate the bug. So test in debug mode you baffoon!
         if sa.len(selected_card_indices) > 0 && rl.IsMouseButtonReleased(.LEFT) {
                 
             top_selected_card := game.cards[sa.get(selected_card_indices, 0)]
@@ -633,6 +681,9 @@ main :: proc() {
                 start_card_movement(&game.cards[card_index])
             }
             sa.clear(&selected_card_indices)
+        
+            sound := rand.choice(card_place_sounds[:])
+            rl.PlaySound(sound)
         }
 
         NUM_BUTTONS :: 3
@@ -666,6 +717,8 @@ main :: proc() {
         if pressed_new_game_button || pressed_new_game_keys {
             reset_game(&game)
             sa.clear(&selected_card_indices)
+
+            rl.PlaySound(deck_shuffle_sound)
         }
 
         if rl.IsKeyPressed(.ONE) do card_back = CardBack(0)
