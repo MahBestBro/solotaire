@@ -4,6 +4,7 @@ import "core:fmt"
 import la "core:math/linalg"
 import "core:math"
 import "core:math/rand"
+import "core:mem"
 import sa "core:container/small_array"
 import "core:slice"
 import "core:strings"
@@ -16,6 +17,7 @@ MAX_CARDS_IN_DECK :: 52 - STARTING_TOTAL_CARDS_IN_DEPOTS
 
 SCREEN_WIDTH  :: 1600
 SCREEN_HEIGHT :: 900
+SCREEN_DIMS :: rl.Vector2{SCREEN_WIDTH, SCREEN_HEIGHT}
 
 //NOTE: These include the shadow around the borders 
 CARD_TEXTURE_START_OFFSET :: rl.Vector2{8, 13}
@@ -57,6 +59,27 @@ JACK :: 11
 QUEEN :: 12
 KING :: 13
 
+
+flip_y :: proc(v: rl.Vector2) -> rl.Vector2 {
+    return rl.Vector2{v.x, -v.y}
+}
+
+rect_v :: proc(pos: rl.Vector2, dims: rl.Vector2) -> rl.Rectangle {
+    return rl.Rectangle{pos.x, pos.y, dims.x, dims.y}
+}
+
+rect_pos :: proc(rect: rl.Rectangle) -> rl.Vector2 {
+    return rl.Vector2{rect.x, rect.y}
+}
+
+rect_dims :: proc(rect: rl.Rectangle) -> rl.Vector2 {
+    return rl.Vector2{rect.width, rect.height}
+}
+
+move_rect :: proc(rect: rl.Rectangle, delta: rl.Vector2) -> rl.Rectangle {
+    return rl.Rectangle{rect.x + delta.x, rect.y + delta.y, rect.width, rect.height}
+}
+
 Suit :: enum {
     DIAMOND = 0,
     HEART = 1,
@@ -71,9 +94,6 @@ same_colour :: proc(suit1: Suit, suit2: Suit) -> bool {
 }
 
 Card :: struct {
-    suit: Suit,
-    num: int,
-    
     face_down: bool,
 
     z_index: int,
@@ -112,23 +132,6 @@ Board :: struct {
     draw_pile: Deck,
     //NOTE: Each pile just tracks what the top card is since it has to be ordered anyways
     suit_piles: [4]int   
-}
-
-
-rect_v :: proc(pos: rl.Vector2, dims: rl.Vector2) -> rl.Rectangle {
-    return rl.Rectangle{pos.x, pos.y, dims.x, dims.y}
-}
-
-rect_pos :: proc(rect: rl.Rectangle) -> rl.Vector2 {
-    return rl.Vector2{rect.x, rect.y}
-}
-
-rect_dims :: proc(rect: rl.Rectangle) -> rl.Vector2 {
-    return rl.Vector2{rect.width, rect.height}
-}
-
-move_rect :: proc(rect: rl.Rectangle, delta: rl.Vector2) -> rl.Rectangle {
-    return rl.Rectangle{rect.x + delta.x, rect.y + delta.y, rect.width, rect.height}
 }
 
 card_texture_rect :: proc(suit: Suit, num: int, face_down: bool) -> (tex_rect: rl.Rectangle) {
@@ -382,13 +385,16 @@ Game :: struct {
     cards: [52]Card,
     board: Board,    
     undos: UndoStack,
-    redos: UndoStack
+    redos: UndoStack,
+
+    game_won: bool
 }
 
 reset_game :: proc(game: ^Game) {
     game.board = initialise_board(&game.cards)
     sa.clear(&game.undos)
     sa.clear(&game.redos)
+    game.game_won = false
 }
 
 draw_button :: proc(rect: rl.Rectangle, text: string) {
@@ -423,14 +429,6 @@ main :: proc() {
     rl.SetTargetFPS(60)
 
     game : Game
-
-    for card, card_index in game.cards {
-        suit, num := card_index_to_suit_num(card_index)
-        
-        game.cards[card_index].suit = suit
-        game.cards[card_index].num = num
-        game.cards[card_index].face_down = false
-    }
 
     sprite_sheet := rl.LoadTexture("assets/sprite_sheet.png")
 
@@ -483,8 +481,6 @@ main :: proc() {
     top_selected_card_from: CardLocation
 
     reset_game(&game)
-
-    game_won := false
 
     for !rl.WindowShouldClose() {
         
@@ -578,7 +574,10 @@ main :: proc() {
 
         if sa.len(selected_card_indices) > 0 && rl.IsMouseButtonReleased(.LEFT) {
                 
-            top_selected_card := game.cards[sa.get(selected_card_indices, 0)]
+            top_selected_card_index := sa.get(selected_card_indices, 0)
+            top_selected_card := game.cards[top_selected_card_index]
+            top_selected_card_suit, top_selected_card_num := card_index_to_suit_num(top_selected_card_index)
+            
             top_selected_card_max_x := top_selected_card.pos.x + CARD_DIMS.x
 
             moved_to : Maybe(CardLocation) = nil
@@ -589,11 +588,11 @@ main :: proc() {
                     top_selected_card_rect := rect_v(top_selected_card.pos, CARD_DIMS)
                     if !rl.CheckCollisionRecs(top_selected_card_rect, suit_pile_rect) do continue
                     
-                    top_card_same_suit := top_selected_card.suit == suit
-                    top_card_is_one_above := top_selected_card.num == game.board.suit_piles[int(suit)] + 1
+                    top_card_same_suit := top_selected_card_suit == suit
+                    top_card_is_one_above := top_selected_card_num == game.board.suit_piles[int(suit)] + 1
 
                     if top_card_same_suit && top_card_is_one_above {
-                        game.board.suit_piles[int(suit)] = top_selected_card.num
+                        game.board.suit_piles[int(suit)] = top_selected_card_num
                         moved_to = SuitPileLocation(suit)
                     }
                 }
@@ -616,12 +615,13 @@ main :: proc() {
 
                         depot_len := sa.len(game.board.depots[depot_index])
                         if depot_len > 0 {
-                            top_depot_card := game.cards[sa.get(game.board.depots[depot_index], depot_len - 1)]
-                            cards_differ_in_colour = !same_colour(top_depot_card.suit, top_selected_card.suit)
-                            top_is_one_more = top_depot_card.num - top_selected_card.num == 1
+                            top_depot_card_index := sa.get(game.board.depots[depot_index], depot_len - 1)
+                            top_depot_card_suit, top_depot_card_num := card_index_to_suit_num(top_depot_card_index)
+                            cards_differ_in_colour = !same_colour(top_depot_card_suit, top_selected_card_suit)
+                            top_is_one_more = top_depot_card_num - top_selected_card_num == 1
                         }
 
-                        moving_king_to_empty_depot := top_selected_card.num == KING && depot_len == 0
+                        moving_king_to_empty_depot := top_selected_card_num == KING && depot_len == 0
 
                         if (cards_differ_in_colour && top_is_one_more) || moving_king_to_empty_depot {
                             depot := &game.board.depots[depot_index]
@@ -726,6 +726,21 @@ main :: proc() {
         if rl.IsKeyPressed(.THREE) do card_back = CardBack(2)
         if rl.IsKeyPressed(.FOUR) do card_back = CardBack(3)
 
+        if rl.IsKeyPressed(.SPACE) {
+            for _, card_index in game.cards {
+                start_card_movement(&game.cards[card_index])
+            }
+            game.game_won = true
+        }
+
+        is_face_up :: proc(card: Card) -> bool { return !card.face_down }
+        if slice.all_of_proc(game.cards[:], is_face_up) && !game.game_won {
+            for _, card_index in game.cards {
+                start_card_movement(&game.cards[card_index])
+            }
+            
+            game.game_won = true
+        }
 
         for &depot, depot_index in game.board.depots {
             for card_index, y in sa.slice(&depot) {
@@ -776,6 +791,39 @@ main :: proc() {
             }
         }
 
+        if game.game_won {
+            WIN_X_OFFSET :: CARD_DIMS.x - 5.0
+            WIN_INNER_Y_PAD :: 40.0
+            WIN_INNER_Y_OFFSET :: CARD_DIMS.y + WIN_INNER_Y_PAD
+            WIN_MIDDLE_Y_PAD :: 120.0
+            WIN_TWO_SUIT_ROWS_HEIGHT :: 2 * CARD_DIMS.y + WIN_INNER_Y_PAD
+
+            WIN_SCREEN_DIMS :: rl.Vector2{
+                13 * WIN_X_OFFSET,
+                2 * WIN_TWO_SUIT_ROWS_HEIGHT + WIN_MIDDLE_Y_PAD
+            }
+
+            start := (SCREEN_DIMS - WIN_SCREEN_DIMS) / 2.0
+            for &card, card_index in game.cards[:len(game.cards) / 2] {
+                suit, num := card_index_to_suit_num(card_index)
+                offset := rl.Vector2{WIN_X_OFFSET * f32(num - 1), WIN_INNER_Y_OFFSET * f32(suit)}
+                card.target_pos = start + offset
+                
+                card.face_down = false
+                card.z_index = card_index
+            }
+            
+            start = (SCREEN_DIMS - flip_y(WIN_SCREEN_DIMS)) / 2.0 - rl.Vector2{0.0, WIN_TWO_SUIT_ROWS_HEIGHT}
+            for &card, card_index in game.cards[len(game.cards) / 2:] {
+                suit, num := card_index_to_suit_num(card_index + len(game.cards) / 2)
+                offset := rl.Vector2{WIN_X_OFFSET * f32(num - 1), WIN_INNER_Y_OFFSET * (f32(suit) - 2.0)}
+                card.target_pos = start + offset
+
+                card.face_down = false
+                card.z_index = card_index + len(game.cards) / 2
+            }
+        }
+
         for &card in game.cards {
             if elapsed_time, is_moving := card.elapsed_move_time_secs.?; is_moving {
                 t := elapsed_time / CARD_TOTAL_MOVE_TIME_SECS
@@ -794,9 +842,6 @@ main :: proc() {
             }
         }
 
-        is_face_up :: proc(card: Card) -> bool { return !card.face_down }
-        if slice.all_of_proc(game.cards[:], is_face_up) do game_won = true
-
         
         {
             rl.BeginDrawing()
@@ -814,7 +859,7 @@ main :: proc() {
 
             rl.DrawRectangleV(
                 rl.Vector2{SCREEN_WIDTH - SIDEBAR_WIDTH, 0},
-                rl.Vector2{SIDEBAR_WIDTH, SCREEN_HEIGHT}, 
+                SCREEN_DIMS, 
                 SIDEBAR_COLOUR
             )
 
@@ -830,7 +875,7 @@ main :: proc() {
             }
             
             //TODO: Change font?
-            if game_won {
+            if game.game_won {
                 WIN_TEXT :: "You Win!"
                 WIN_TEXT_SIZE :: 50.0
                 WIN_TEXT_SPACING :: 4.0
@@ -838,20 +883,33 @@ main :: proc() {
                 rl.DrawTextEx(
                     rl.GetFontDefault(), 
                     WIN_TEXT, 
-                    (rl.Vector2{SCREEN_WIDTH, SCREEN_HEIGHT} - text_dims) / 2.0,
+                    (SCREEN_DIMS - text_dims) / 2.0,
                     WIN_TEXT_SIZE,
                     WIN_TEXT_SPACING,
                     rl.WHITE 
                 )
             }
 
-            cards_to_draw := slice.clone(game.cards[:], context.temp_allocator)
 
+            KILOBYTE :: 1024
+
+            sort_mem : [3 * KILOBYTE]byte
+            sort_arena : mem.Arena
+            mem.arena_init(&sort_arena, sort_mem[:])
+
+            cards_to_draw, err := slice.clone(game.cards[:], mem.arena_allocator(&sort_arena))
+            assert(err == .None)
+            
             compare_by_z_index :: proc (i, j: Card) -> bool { return i.z_index < j.z_index }
-            slice.sort_by(cards_to_draw, compare_by_z_index)
+            card_indices_to_draw := slice.sort_by_with_indices(
+                cards_to_draw, 
+                compare_by_z_index, 
+                mem.arena_allocator(&sort_arena)
+            )
 
-            for card in cards_to_draw {
-                texture_rect := card_texture_rect(card.suit, card.num, card.face_down)
+            for card, i in cards_to_draw {
+                suit, num := card_index_to_suit_num(card_indices_to_draw[i])
+                texture_rect := card_texture_rect(suit, num, card.face_down)
                 if card.face_down do texture_rect = card_back_texture_rect(card_back)
 
                 rl.DrawTextureRec(sprite_sheet, texture_rect, card.pos, rl.WHITE)
