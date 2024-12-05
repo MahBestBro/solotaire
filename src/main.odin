@@ -480,11 +480,15 @@ main :: proc() {
     card_pos_on_click: rl.Vector2
     top_selected_card_from: CardLocation
 
+    t : f32 = 0.0
+    
     reset_game(&game)
 
     for !rl.WindowShouldClose() {
         
         dt := rl.GetFrameTime()
+        defer t += dt
+
         mouse_pos := rl.GetMousePosition()
 
         if rl.IsMouseButtonPressed(.LEFT) {
@@ -803,21 +807,34 @@ main :: proc() {
                 2 * WIN_TWO_SUIT_ROWS_HEIGHT + WIN_MIDDLE_Y_PAD
             }
 
+            WIN_ANIM_PERIOD :: 5.0
+            WIN_ANIM_AMPLITUDE :: 20.0
+            WIN_WAVE_FREQ :: 7.0 //NOTE: I have no idea the technical term so sorry for the bad name
+
             start := (SCREEN_DIMS - WIN_SCREEN_DIMS) / 2.0
             for &card, card_index in game.cards[:len(game.cards) / 2] {
                 suit, num := card_index_to_suit_num(card_index)
                 offset := rl.Vector2{WIN_X_OFFSET * f32(num - 1), WIN_INNER_Y_OFFSET * f32(suit)}
-                card.target_pos = start + offset
+                
+                weird_t := t + WIN_WAVE_FREQ * f32(card_index) / 13.0
+                phase : f32 = 0.5 * math.PI * f32(card_index / 13) 
+                anim_y_offset := WIN_ANIM_AMPLITUDE * math.sin(2 * math.PI * weird_t / WIN_ANIM_PERIOD + phase)
+                card.target_pos = start + offset + rl.Vector2{0.0, anim_y_offset}
                 
                 card.face_down = false
                 card.z_index = card_index
             }
             
             start = (SCREEN_DIMS - flip_y(WIN_SCREEN_DIMS)) / 2.0 - rl.Vector2{0.0, WIN_TWO_SUIT_ROWS_HEIGHT}
-            for &card, card_index in game.cards[len(game.cards) / 2:] {
-                suit, num := card_index_to_suit_num(card_index + len(game.cards) / 2)
+            for &card, i in game.cards[len(game.cards) / 2:] {
+                card_index := i + len(game.cards) / 2
+                suit, num := card_index_to_suit_num(card_index)
                 offset := rl.Vector2{WIN_X_OFFSET * f32(num - 1), WIN_INNER_Y_OFFSET * (f32(suit) - 2.0)}
-                card.target_pos = start + offset
+                
+                weird_t := t + WIN_WAVE_FREQ * f32(card_index) / 13.0
+                phase : f32 = 0.5 * math.PI * f32(card_index / 13)
+                anim_y_offset := WIN_ANIM_AMPLITUDE * math.sin(2 * math.PI * weird_t / WIN_ANIM_PERIOD + phase)
+                card.target_pos = start + offset + rl.Vector2{0.0, anim_y_offset}
 
                 card.face_down = false
                 card.z_index = card_index + len(game.cards) / 2
@@ -826,9 +843,8 @@ main :: proc() {
 
         for &card in game.cards {
             if elapsed_time, is_moving := card.elapsed_move_time_secs.?; is_moving {
-                t := elapsed_time / CARD_TOTAL_MOVE_TIME_SECS
-                //x === 1 ? 1 : 1 - Math.pow(2, -10 * x);
-                eased_t := min(1.0 - math.pow(2.0, -10.0 * t), 1.0)
+                lerp_t := elapsed_time / CARD_TOTAL_MOVE_TIME_SECS
+                eased_t := min(1.0 - math.pow(2.0, -10.0 * lerp_t), 1.0)
                 card.pos = la.lerp(card.start_pos, card.target_pos, eased_t)
                 
                 new_elapsed_time := elapsed_time + dt
