@@ -47,7 +47,9 @@ DEPOT_X_OFFSET := (SCREEN_WIDTH - 2 * DEPOTS_START.x) / NUM_DEPOTS
 CARD_DIMS :: CARD_TEXTURE_CARD_DIMS
 //The offset from the top of the card required in order to not hide the suit and number
 CARD_STACKED_Y_OFFSET :: 45.0 
-CARD_TOTAL_MOVE_TIME_SECS :: 0.4 
+
+CARD_DROP_TOTAL_MOVE_TIME_SECS :: 0.4 
+CARD_RESET_TOTAL_MOVE_TIME_SECS :: 0.7 
 
 BUTTON_PAD :: 10
 BUTTON_WIDTH :: SIDEBAR_WIDTH - 2 * BUTTON_PAD
@@ -100,7 +102,8 @@ Card :: struct {
     pos: rl.Vector2,
 
     start_pos, target_pos: rl.Vector2,
-    elapsed_move_time_secs: Maybe(f32)
+    elapsed_move_time_secs: Maybe(f32),
+    total_move_time_secs: f32
 }
 
 suit_num_to_card_index :: proc(suit: Suit, num: int) -> int {
@@ -117,9 +120,10 @@ card_index_to_suit_num :: proc(card_index: int) -> (suit: Suit, num: int) {
     return 
 }
 
-start_card_movement :: proc(card: ^Card) {
+start_card_movement :: proc(card: ^Card, total_move_time_secs: f32) {
     card.start_pos = card.pos
     card.elapsed_move_time_secs = 0.0
+    card.total_move_time_secs = total_move_time_secs
 }
 
 Depot :: sa.Small_Array(20, int)
@@ -202,7 +206,7 @@ initialise_board :: proc(cards: ^[52]Card) -> (board: Board) {
             
             cards[card_index].face_down = y < depot_max - 1
             cards[card_index].pos = DECK_POS
-            start_card_movement(&cards[card_index])
+            start_card_movement(&cards[card_index], CARD_RESET_TOTAL_MOVE_TIME_SECS)
         }
     }
 
@@ -328,7 +332,7 @@ apply_undo :: proc(undo_kind: UndoKind, game: ^Game) {
                     for card_index in sa.slice(&cards_to_move) {
                         sa.append(depot, card_index)
 
-                        start_card_movement(&game.cards[card_index])
+                        start_card_movement(&game.cards[card_index], CARD_DROP_TOTAL_MOVE_TIME_SECS)
                     }
 
                 case SuitPileLocation:
@@ -337,14 +341,14 @@ apply_undo :: proc(undo_kind: UndoKind, game: ^Game) {
                     game.board.suit_piles[suit_index] += 1 
 
                     card_index := suit_num_to_card_index(from, game.board.suit_piles[suit_index])
-                    start_card_movement(&game.cards[card_index])
+                    start_card_movement(&game.cards[card_index], CARD_DROP_TOTAL_MOVE_TIME_SECS)
                 
                 case DrawPileLocation:
                     assert(sa.len(cards_to_move) == 1)
                     card_index := sa.pop_back(&cards_to_move)
                     sa.append(&game.board.draw_pile, card_index)
 
-                    start_card_movement(&game.cards[card_index])
+                    start_card_movement(&game.cards[card_index], CARD_DROP_TOTAL_MOVE_TIME_SECS)
                 
                 case DeckLocation: 
                     assert(false)
@@ -368,14 +372,14 @@ apply_undo :: proc(undo_kind: UndoKind, game: ^Game) {
                 card_index := sa.pop_back(deck_to_pop)
                 sa.append(deck_to_push, card_index) 
 
-                start_card_movement(&game.cards[card_index])
+                start_card_movement(&game.cards[card_index], CARD_DROP_TOTAL_MOVE_TIME_SECS)
             } else {
                 //All cards have been drawn/put back, so put all of them back into the other deck
                 for sa.len(deck_to_push^) > 0 {
                     card_index := sa.pop_back(deck_to_push)
                     sa.append(deck_to_pop, card_index)
 
-                    start_card_movement(&game.cards[card_index])
+                    start_card_movement(&game.cards[card_index], CARD_DROP_TOTAL_MOVE_TIME_SECS)
                 }
             }
 
@@ -555,7 +559,8 @@ main :: proc() {
                     draw_pile_len := sa.len(game.board.draw_pile)
                     top_cards_start := draw_pile_len - min(3, draw_pile_len)
                     for i in top_cards_start..<draw_pile_len {
-                        start_card_movement(&game.cards[sa.get(game.board.draw_pile, i)])
+                        card_index := sa.get(game.board.draw_pile, i)
+                        start_card_movement(&game.cards[card_index], CARD_DROP_TOTAL_MOVE_TIME_SECS)
                     }
 
                     sound := rand.choice(card_draw_sounds[:])
@@ -566,7 +571,7 @@ main :: proc() {
                         card_index := sa.pop_back(&game.board.draw_pile)
                         sa.append(&game.board.deck, card_index)
 
-                        start_card_movement(&game.cards[card_index])
+                        start_card_movement(&game.cards[card_index], CARD_DROP_TOTAL_MOVE_TIME_SECS)
                     }
 
                     sound := rand.choice(deck_reset_sounds[:])
@@ -684,7 +689,7 @@ main :: proc() {
             }
 
             for card_index in sa.slice(&selected_card_indices) {
-                start_card_movement(&game.cards[card_index])
+                start_card_movement(&game.cards[card_index], CARD_DROP_TOTAL_MOVE_TIME_SECS)
             }
             sa.clear(&selected_card_indices)
         
@@ -734,7 +739,7 @@ main :: proc() {
 
         if ODIN_DEBUG && rl.IsKeyPressed(.SPACE) {
             for _, card_index in game.cards {
-                start_card_movement(&game.cards[card_index])
+                start_card_movement(&game.cards[card_index], CARD_DROP_TOTAL_MOVE_TIME_SECS)
             }
             game.game_won = true
         }
@@ -742,7 +747,7 @@ main :: proc() {
         is_face_up :: proc(card: Card) -> bool { return !card.face_down }
         if slice.all_of_proc(game.cards[:], is_face_up) && !game.game_won {
             for _, card_index in game.cards {
-                start_card_movement(&game.cards[card_index])
+                start_card_movement(&game.cards[card_index], CARD_DROP_TOTAL_MOVE_TIME_SECS)
             }
             
             game.game_won = true
@@ -845,12 +850,12 @@ main :: proc() {
 
         for &card in game.cards {
             if elapsed_time, is_moving := card.elapsed_move_time_secs.?; is_moving {
-                lerp_t := elapsed_time / CARD_TOTAL_MOVE_TIME_SECS
+                lerp_t := elapsed_time / card.total_move_time_secs
                 eased_t := min(1.0 - math.pow(2.0, -10.0 * lerp_t), 1.0)
                 card.pos = la.lerp(card.start_pos, card.target_pos, eased_t)
                 
                 new_elapsed_time := elapsed_time + dt
-                if new_elapsed_time < CARD_TOTAL_MOVE_TIME_SECS {
+                if new_elapsed_time < card.total_move_time_secs {
                     card.elapsed_move_time_secs = new_elapsed_time
                 } else {
                     card.elapsed_move_time_secs = nil
@@ -911,7 +916,7 @@ main :: proc() {
 
             KILOBYTE :: 1024
 
-            sort_mem : [3 * KILOBYTE]byte
+            sort_mem : [4 * KILOBYTE]byte
             sort_arena : mem.Arena
             mem.arena_init(&sort_arena, sort_mem[:])
 
