@@ -50,6 +50,7 @@ CARD_STACKED_Y_OFFSET :: 45.0
 
 CARD_DROP_TOTAL_MOVE_TIME_SECS :: 0.4 
 CARD_RESET_TOTAL_MOVE_TIME_SECS :: 0.7 
+CARD_WIN_TOTAL_MOVE_TIME_SECS :: 1.5
 
 BUTTON_PAD :: 10
 BUTTON_WIDTH :: SIDEBAR_WIDTH - 2 * BUTTON_PAD
@@ -739,7 +740,7 @@ main :: proc() {
 
         if ODIN_DEBUG && rl.IsKeyPressed(.SPACE) {
             for _, card_index in game.cards {
-                start_card_movement(&game.cards[card_index], CARD_DROP_TOTAL_MOVE_TIME_SECS)
+                start_card_movement(&game.cards[card_index], CARD_WIN_TOTAL_MOVE_TIME_SECS)
             }
             game.game_won = true
         }
@@ -747,7 +748,7 @@ main :: proc() {
         is_face_up :: proc(card: Card) -> bool { return !card.face_down }
         if slice.all_of_proc(game.cards[:], is_face_up) && !game.game_won {
             for _, card_index in game.cards {
-                start_card_movement(&game.cards[card_index], CARD_DROP_TOTAL_MOVE_TIME_SECS)
+                start_card_movement(&game.cards[card_index], CARD_WIN_TOTAL_MOVE_TIME_SECS)
             }
             
             game.game_won = true
