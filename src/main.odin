@@ -200,7 +200,9 @@ initialise_board :: proc(cards: ^[52]Card) -> (board: Board) {
             
             sa.append(&board.depots[depot_index], card_index)
             
-            cards^[card_index].face_down = y < depot_max - 1
+            cards[card_index].face_down = y < depot_max - 1
+            cards[card_index].pos = DECK_POS
+            start_card_movement(&cards[card_index])
         }
     }
 
