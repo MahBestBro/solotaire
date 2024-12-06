@@ -2,7 +2,9 @@
  A solitaire game made with odin and raylib 
 
 # Build
-`odin build src -out:solotaire.exe -debug -ignore-unknown-attributes`
+Debug: `odin build src -out:solotaire.exe -debug -ignore-unknown-attributes`
+Release: `odin build src -out:solotaire.exe -ignore-unknown-attributes`
 
-# Run
-`odin run src -out:solotaire.exe -debug -ignore-unknown-attributes`
+# Build and Run
+Debug: `odin run src -out:solotaire.exe -debug -ignore-unknown-attributes`
+Release: `odin run src -out:solotaire.exe -ignore-unknown-attributes`

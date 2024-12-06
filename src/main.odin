@@ -730,7 +730,7 @@ main :: proc() {
         if rl.IsKeyPressed(.THREE) do card_back = CardBack(2)
         if rl.IsKeyPressed(.FOUR) do card_back = CardBack(3)
 
-        if rl.IsKeyPressed(.SPACE) {
+        if ODIN_DEBUG && rl.IsKeyPressed(.SPACE) {
             for _, card_index in game.cards {
                 start_card_movement(&game.cards[card_index])
             }
