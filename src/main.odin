@@ -48,9 +48,10 @@ CARD_DIMS :: CARD_TEXTURE_CARD_DIMS
 //The offset from the top of the card required in order to not hide the suit and number
 CARD_STACKED_Y_OFFSET :: 45.0 
 
-CARD_DROP_TOTAL_MOVE_TIME_SECS :: 0.4 
+CARD_DROP_TOTAL_MOVE_TIME_SECS :: 0.5 
 CARD_RESET_TOTAL_MOVE_TIME_SECS :: 0.7 
 CARD_WIN_TOTAL_MOVE_TIME_SECS :: 1.5
+AUTO_PLACE_TIME_FRAME_SECS :: 0.4
 
 BUTTON_PAD :: 10
 BUTTON_WIDTH :: SIDEBAR_WIDTH - 2 * BUTTON_PAD
@@ -486,6 +487,7 @@ main :: proc() {
     mouse_pos_on_click: rl.Vector2
     card_pos_on_click: rl.Vector2
     top_selected_card_from: CardLocation
+    card_select_elapsed_time_secs: f32
 
     t : f32 = 0.0
     
@@ -508,8 +510,9 @@ main :: proc() {
                 for card, card_index in game.cards {
                     //NOTE: Using this guard to avoid costy process of searching up card location (probs won't
                     //have a big impact, but it's cheap to do)
-                    card_rect := rect_v(card.pos, CARD_DIMS)
-                    if card.face_down || !rl.CheckCollisionPointRec(mouse_pos, card_rect) do continue
+                    mouse_over_card := rl.CheckCollisionPointRec(mouse_pos, rect_v(card.pos, CARD_DIMS))
+                    is_already_moving := card.elapsed_move_time_secs != nil
+                    if is_already_moving || card.face_down || !mouse_over_card do continue
 
                     //NOTE: This makes the loop O(n^2). If that hurts performance, come up with better
                     //approach
@@ -591,14 +594,19 @@ main :: proc() {
             top_selected_card_suit, top_selected_card_num := card_index_to_suit_num(top_selected_card_index)
             
             top_selected_card_max_x := top_selected_card.pos.x + CARD_DIMS.x
+            within_suit_pile_sidebar := top_selected_card_max_x > SCREEN_WIDTH - SIDEBAR_WIDTH
+
+            auto_placing := card_select_elapsed_time_secs <= AUTO_PLACE_TIME_FRAME_SECS
 
             moved_to : Maybe(CardLocation) = nil
 
-            if sa.len(selected_card_indices) == 1 && top_selected_card_max_x > SCREEN_WIDTH - SIDEBAR_WIDTH {
+            if sa.len(selected_card_indices) == 1 && (within_suit_pile_sidebar || auto_placing) {
                 for suit in Suit {
                     suit_pile_rect := rect_v(suit_pile_pos(suit), CARD_DIMS)
                     top_selected_card_rect := rect_v(top_selected_card.pos, CARD_DIMS)
-                    if !rl.CheckCollisionRecs(top_selected_card_rect, suit_pile_rect) do continue
+                    
+                    intersecting_with_suit_pile := rl.CheckCollisionRecs(top_selected_card_rect, suit_pile_rect)
+                    if !intersecting_with_suit_pile && !auto_placing do continue
                     
                     top_card_same_suit := top_selected_card_suit == suit
                     top_card_is_one_above := top_selected_card_num == game.board.suit_piles[int(suit)] + 1
@@ -608,7 +616,9 @@ main :: proc() {
                         moved_to = SuitPileLocation(suit)
                     }
                 }
-            } else {
+            } 
+            
+            if moved_to == nil {
                 //TODO: Consider just going to nearest depot instead of checking for intersection?
                 for depot_index in 0..<len(game.board.depots) {
                     depot_loc, from_depot := top_selected_card_from.(DepotLocation)
@@ -621,7 +631,7 @@ main :: proc() {
 
                     card_min_x_in_depot := selected_card_min_x >= depot_min_x && selected_card_min_x <= depot_max_x
                     card_max_x_in_depot := selected_card_max_x >= depot_min_x && selected_card_max_x <= depot_max_x
-                    if card_min_x_in_depot || card_max_x_in_depot {
+                    if card_min_x_in_depot || card_max_x_in_depot || auto_placing {
                         cards_differ_in_colour := false 
                         top_is_one_more := false
 
@@ -648,9 +658,11 @@ main :: proc() {
                             }
                         }
 
-                        break
+                        if moved_to != nil || !auto_placing do break
                     }
                 }
+
+                card_select_elapsed_time_secs = 0.0
             }
             
             if to, ok := moved_to.?; ok {
@@ -744,6 +756,8 @@ main :: proc() {
             }
             game.game_won = true
         }
+
+        if sa.len(selected_card_indices) > 0 do card_select_elapsed_time_secs += dt
 
         is_face_up :: proc(card: Card) -> bool { return !card.face_down }
         if slice.all_of_proc(game.cards[:], is_face_up) && !game.game_won {
